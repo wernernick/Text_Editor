@@ -42,6 +42,7 @@ class Paragraph:
     style: str = "Normal"  # z.B. "Heading 1"
     list_type: Optional[str] = None  # None | "bullet" | "number"
     list_level: int = 0  # Einrückungsebene der Liste, 0..MAX_LIST_LEVEL
+    table: Optional["Table"] = None  # gesetzt = dieser Block ist eine Tabelle, runs werden ignoriert
 
     @property
     def text(self) -> str:
@@ -61,6 +62,77 @@ class Paragraph:
 
 
 @dataclass
+class TableCell:
+    """Eine Tabellenzelle; enthält wie in Word eigene Absätze."""
+
+    paragraphs: list[Paragraph] = field(default_factory=lambda: [Paragraph()])
+
+    @property
+    def text(self) -> str:
+        return "\n".join(p.text for p in self.paragraphs)
+
+    @classmethod
+    def from_text(cls, text: str) -> "TableCell":
+        return cls(paragraphs=[Paragraph(runs=[Run(line)] if line else []) for line in text.split("\n")])
+
+
+@dataclass
+class Table:
+    """Einfache Tabelle: rechteckiges Raster aus Zellen (keine verbundenen Zellen)."""
+
+    rows: list[list[TableCell]] = field(default_factory=list)
+    header_row: bool = False  # erste Zeile als Kopfzeile hervorheben
+
+    @classmethod
+    def create(cls, row_count: int, col_count: int) -> "Table":
+        if row_count < 1 or col_count < 1:
+            raise ValueError("Tabelle braucht mindestens 1 Zeile und 1 Spalte")
+        return cls(rows=[[TableCell() for _ in range(col_count)] for _ in range(row_count)])
+
+    @classmethod
+    def from_texts(cls, rows: list[list[str]], header_row: bool = False) -> "Table":
+        width = max((len(r) for r in rows), default=0)
+        table = cls.create(max(1, len(rows)), max(1, width))
+        for r, row in enumerate(rows):
+            for c, text in enumerate(row):
+                table.rows[r][c] = TableCell.from_text(text)
+        table.header_row = header_row
+        return table
+
+    @property
+    def row_count(self) -> int:
+        return len(self.rows)
+
+    @property
+    def col_count(self) -> int:
+        return len(self.rows[0]) if self.rows else 0
+
+    def cell(self, row: int, col: int) -> TableCell:
+        return self.rows[row][col]
+
+    def texts(self) -> list[list[str]]:
+        return [[cell.text for cell in row] for row in self.rows]
+
+    def insert_row(self, index: int | None = None) -> None:
+        index = self.row_count if index is None else index
+        self.rows.insert(index, [TableCell() for _ in range(max(1, self.col_count))])
+
+    def insert_column(self, index: int | None = None) -> None:
+        index = self.col_count if index is None else index
+        for row in self.rows:
+            row.insert(index, TableCell())
+
+    def delete_row(self, index: int) -> None:
+        if self.row_count > 1:
+            del self.rows[index]
+
+    def delete_column(self, index: int) -> None:
+        if self.col_count > 1:
+            for row in self.rows:
+                del row[index]
+
+
+@dataclass
 class Document:
     """Ein komplettes Dokument."""
 
@@ -77,7 +149,20 @@ class Document:
         return cls(paragraphs=[Paragraph(runs=[Run(line)] if line else []) for line in lines])
 
     def plain_text(self) -> str:
-        return "\n".join(p.text for p in self.paragraphs)
+        """Gesamter Text; Tabellenzellen durch Tab, Tabellenzeilen durch Zeilenumbruch getrennt."""
+        lines = []
+        for p in self.paragraphs:
+            if p.table is not None:
+                lines.extend("\t".join(c.text.replace("\n", " ") for c in row) for row in p.table.rows)
+            else:
+                lines.append(p.text)
+        return "\n".join(lines)
+
+    def insert_table(self, index: int, row_count: int, col_count: int) -> Table:
+        """Fügt an Position index einen Tabellen-Block ein und gibt die Tabelle zurück."""
+        table = Table.create(row_count, col_count)
+        self.paragraphs.insert(index, Paragraph(table=table))
+        return table
 
     def list_labels(self) -> list[Optional[str]]:
         """Aufzählungszeichen bzw. Nummer je Absatz ("•", "1.", "a." ...), None ohne Liste.
@@ -88,7 +173,7 @@ class Document:
         labels: list[Optional[str]] = []
         counters = [0] * (MAX_LIST_LEVEL + 1)
         for para in self.paragraphs:
-            if para.list_type not in LIST_TYPES:
+            if para.list_type not in LIST_TYPES or para.table is not None:
                 counters = [0] * (MAX_LIST_LEVEL + 1)
                 labels.append(None)
                 continue
