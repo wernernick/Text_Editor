@@ -53,6 +53,7 @@ class DocumentEditor(ctk.CTkFrame):
         self.on_cursor = on_cursor
         self.zoom = 100
         self.typing_format = CharFormat()
+        self.palette = theme.PAGE_PALETTES["neon"]
         self._known_run_tags: set[str] = set()
 
         self.grid_columnconfigure(0, weight=1)
@@ -130,13 +131,24 @@ class DocumentEditor(ctk.CTkFrame):
                 indent = round(theme.LIST_INDENT * self.zoom / 100)
                 self.text.tag_configure(tag, lmargin1=indent, lmargin2=indent)
                 continue
-            size, bold, color = spec
+            size, bold, _color = spec
+            color = self.palette["headings"].get(name, _color)
             self.text.tag_configure(
                 tag, foreground=color, spacing1=10, spacing3=8,
                 font=(theme.DEFAULT_DOC_FONT, max(1, round(size * self.zoom / 100)),
                       "bold" if bold else "normal"),
             )
             self.text.tag_raise(tag)
+
+    def set_page_mode(self, mode: str) -> None:
+        """Seitenfarbe umschalten: "neon" oder "paper"."""
+        self.palette = theme.PAGE_PALETTES[mode]
+        pal = self.palette
+        self.page.configure(fg_color=pal["page"], border_color=pal["border"])
+        self.text.configure(bg=pal["page"], fg=pal["text"], insertbackground=pal["cursor"],
+                            selectbackground=pal["selection"], selectforeground=pal["text"])
+        self._configure_style_tags()
+        self.schedule_markers()
 
     def set_zoom(self, zoom: int) -> None:
         self.zoom = zoom
@@ -207,12 +219,13 @@ class DocumentEditor(ctk.CTkFrame):
                 markers.append((info, label))
         while len(self._markers) < len(markers):
             self._markers.append(tk.Label(
-                self.text, bg=theme.BG_PAGE, fg=theme.ACCENT, borderwidth=0, padx=0, pady=0))
+                self.text, borderwidth=0, padx=0, pady=0))
         size = max(6, round(theme.DEFAULT_DOC_SIZE * self.zoom / 100))
         pad_x, pad_y = int(self.text.cget("padx")), int(self.text.cget("pady"))
         for widget, (info, label) in zip(self._markers, markers):
             x, y, _w, height, _base = info
-            widget.configure(text=label, font=(theme.DEFAULT_DOC_FONT, size, "bold"))
+            widget.configure(text=label, font=(theme.DEFAULT_DOC_FONT, size, "bold"),
+                             bg=self.palette["page"], fg=self.palette["marker"])
             # place() rechnet ab dem inneren Rand (padx/pady) des Text-Widgets
             widget.place(x=x - round(theme.LIST_INDENT * self.zoom / 100) - pad_x,
                          y=y - pad_y, height=height)

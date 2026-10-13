@@ -97,9 +97,12 @@ class Ribbon(ctk.CTkFrame):
         r = g.row()
         _button(r, "＋ Neu", a["new"], 80).pack(side="left", padx=2)
         _button(r, "📂 Öffnen", a["open"], 90).pack(side="left", padx=2)
+        self.recent_button = _button(r, "🕘 Zuletzt", None, 80)
+        self.recent_button.configure(command=lambda: a["recent"](self.recent_button))
+        self.recent_button.pack(side="left", padx=2)
         r = g.row()
         _button(r, "💾 Speichern", a["save"], 80, accent=True).pack(side="left", padx=2)
-        _button(r, "Speichern unter", a["save_as"], 90).pack(side="left", padx=2)
+        _button(r, "Speichern unter", a["save_as"], 120).pack(side="left", padx=2)
         self._separator(page)
 
         g = self._group(page, "Schriftart")
@@ -216,6 +219,16 @@ class Ribbon(ctk.CTkFrame):
             text_color=theme.TEXT, font=theme.ui_font(12))
         self.status_switch.select()
         self.status_switch.pack(side="left", padx=4)
+        self._separator(page)
+        g = self._group(page, "Seitenfarbe")
+        r = g.row()
+        self.page_mode = ctk.CTkSegmentedButton(
+            r, values=["Neon", "Papier"], command=a["page_mode"], height=28,
+            selected_color="#0f6a80", selected_hover_color="#13809a",
+            unselected_color=theme.BG_BUTTON, unselected_hover_color=theme.BG_BUTTON_HOVER,
+            fg_color=theme.BORDER, text_color=theme.TEXT, font=theme.ui_font(12))
+        self.page_mode.set("Neon")
+        self.page_mode.pack(side="left", padx=4)
 
     # ---------------------------------------------------- Zustand anzeigen
     def update_state(self, fmt, alignment: str, style: str) -> None:
