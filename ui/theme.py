@@ -62,6 +62,10 @@ PAGE_PALETTES = {
 LIST_STYLES = ("List Bullet", "List Number")
 LIST_INDENT = 28
 BULLET_CHAR = "◆"
+BULLET_CHARS = ("◆", "◇", "▪")  # je Listenebene 0..2
+MAX_LIST_LEVEL = 2
+BULLET_CHARS = ("◆", "◇", "▪")  # je Listenebene 0..2
+MAX_LIST_LEVEL = 2
 STYLE_LABELS = {
     "Normal": "Standard",
     "Heading 1": "Überschrift 1",

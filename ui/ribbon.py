@@ -200,6 +200,15 @@ class Ribbon(ctk.CTkFrame):
     # ---------------------------------------------------------- Einfügen
     def _build_insert(self, page) -> None:
         a = self.actions
+        g = self._group(page, "Tabelle")
+        r = g.row()
+        _button(r, "▦ Tabelle", a["insert_table"], 96, accent=True).pack(side="left", padx=2)
+        _button(r, "+ Zeile", lambda: a["table_op"]("insert_row"), 70).pack(side="left", padx=2)
+        _button(r, "+ Spalte", lambda: a["table_op"]("insert_column"), 74).pack(side="left", padx=2)
+        r = g.row()
+        _button(r, "− Zeile", lambda: a["table_op"]("delete_row"), 70).pack(side="left", padx=(100, 2))
+        _button(r, "− Spalte", lambda: a["table_op"]("delete_column"), 74).pack(side="left", padx=2)
+        self._separator(page)
         g = self._group(page, "Text")
         r = g.row()
         _button(r, "📅 Datum", a["insert_date"], 90).pack(side="left", padx=2)

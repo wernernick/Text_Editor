@@ -83,6 +83,7 @@ class TextEditorApp(ctk.CTk):
             "paste": lambda: self._clipboard("<<Paste>>"),
             "font_step": self._font_step, "case_menu": self.show_case_menu,
             "clear_format": self._clear_format,
+            "insert_table": self.ask_insert_table, "table_op": self._table_op,
             "find": lambda: self.show_find(False), "replace": lambda: self.show_find(True),
             "page_mode": lambda label: self.editor.set_page_mode("paper" if label == "Papier" else "neon"),
             "toggle_wrap": self._toggle_wrap, "toggle_status": self._toggle_status,
@@ -111,6 +112,12 @@ class TextEditorApp(ctk.CTk):
         self.editor.text.bind("<Control-space>", lambda _e: (self._clear_format(), "break")[1])
         self.editor.text.bind("<Shift-F3>", lambda _e: (self._change_case("cycle"), "break")[1])
         self.editor.text.bind("<Button-3>", self.show_context_menu)
+        self.editor.text.bind("<Tab>", lambda _e: "break" if self.editor.handle_tab() else None)
+        for seq in ("<Shift-Tab>", "<ISO_Left_Tab>"):  # Windows / Linux
+            try:
+                self.editor.text.bind(seq, lambda _e: "break" if self.editor.handle_tab(shift=True) else None)
+            except tk.TclError:
+                pass
         self.editor.text.bind("<Control-a>", lambda _e: (self.editor.text.tag_add("sel", "1.0", "end-1c"), "break")[1])
         self.editor.text.bind("<Control-y>", lambda _e: (self._redo(), "break")[1])
         for i, style in enumerate(("Heading 1", "Heading 2", "Heading 3"), start=1):
@@ -125,6 +132,34 @@ class TextEditorApp(ctk.CTk):
         self.editor.toggle_list(style)
         self._refresh_ui()
         self.editor.text.focus_set()
+
+    def ask_insert_table(self) -> None:
+        dialog = ctk.CTkInputDialog(title="Tabelle einfügen",
+                                    text="Größe als Zeilen x Spalten, z.B. 3x4:")
+        value = dialog.get_input()
+        if value:
+            self.insert_table_from_spec(value)
+
+    def insert_table_from_spec(self, spec: str) -> bool:
+        try:
+            rows, cols = (int(part) for part in spec.lower().replace("×", "x").replace("*", "x").split("x"))
+            if not (1 <= rows <= 50 and 1 <= cols <= 12):
+                raise ValueError
+            from core.document_model import Table
+        except (ValueError, ImportError):
+            self.status.set_state("UNGÜLTIGE TABELLENGRÖSSE", ok=False)
+            return False
+        widget = self.editor.insert_table(Table.create(rows, cols))
+        widget.cells[0][0].focus_set()
+        self.status.set_state(f"TABELLE {rows}×{cols} EINGEFÜGT")
+        return True
+
+    def _table_op(self, op: str) -> None:
+        table = self.editor.active_table
+        if table is None or not table.winfo_exists():
+            self.status.set_state("ERST IN EINE TABELLE KLICKEN", ok=False)
+            return
+        getattr(table, op)()
 
     def _undo(self) -> None:
         try:
@@ -393,7 +428,11 @@ class TextEditorApp(ctk.CTk):
 
     def build_document(self):
         from core.document_model import Document, Paragraph, Run
-        return self.editor.to_document(Document, Paragraph, Run)
+        try:
+            from core.document_model import Table, TableCell
+        except ImportError:  # älterer Core ohne Tabellen
+            Table = TableCell = None
+        return self.editor.to_document(Document, Paragraph, Run, Table, TableCell)
 
     def _write(self, path: str) -> bool:
         try:
