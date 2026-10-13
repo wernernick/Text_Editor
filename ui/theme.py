@@ -42,13 +42,20 @@ PARAGRAPH_STYLES = {
     "Heading 2": (16, True, ACCENT_2),
     "Heading 3": (13, True, "#9fb4ff"),
     "Title": (28, True, ACCENT),
+    "List Bullet": "list",   # Listen: Einzug + Aufzählungszeichen als Overlay
+    "List Number": "list",
 }
+LIST_STYLES = ("List Bullet", "List Number")
+LIST_INDENT = 28
+BULLET_CHAR = "◆"
 STYLE_LABELS = {
     "Normal": "Standard",
     "Heading 1": "Überschrift 1",
     "Heading 2": "Überschrift 2",
     "Heading 3": "Überschrift 3",
     "Title": "Titel",
+    "List Bullet": "Aufzählung",
+    "List Number": "Nummerierung",
 }
 
 # Maße

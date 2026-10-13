@@ -74,6 +74,8 @@ class TextEditorApp(ctk.CTk):
             "insert_line": lambda: self._insert("\n" + "─" * 40 + "\n"),
             "insert_text": self._insert,
             "zoom_step": self._zoom_step, "zoom_reset": lambda: self._set_zoom(100),
+            "list_bullet": lambda: self._toggle_list("List Bullet"),
+            "list_number": lambda: self._toggle_list("List Number"),
             "find": lambda: self.show_find(False), "replace": lambda: self.show_find(True),
             "toggle_wrap": self._toggle_wrap, "toggle_status": self._toggle_status,
         }
@@ -93,6 +95,7 @@ class TextEditorApp(ctk.CTk):
             self.editor.text.bind(seq, lambda _e, f=func: (f(), "break")[1])
             self.bind(seq, lambda _e, f=func: f())
         self.editor.text.bind("<Control-Shift-S>", lambda _e: (self.save_document_as(), "break")[1])
+        self.editor.text.bind("<Control-Shift-L>", lambda _e: (self._toggle_list("List Bullet"), "break")[1])
         self.editor.text.bind("<Control-y>", lambda _e: (self._redo(), "break")[1])
         for i, style in enumerate(("Heading 1", "Heading 2", "Heading 3"), start=1):
             self.editor.text.bind(f"<Control-Alt-Key-{i}>", lambda _e, s=style: (self._set_style(s), "break")[1])
@@ -101,6 +104,11 @@ class TextEditorApp(ctk.CTk):
         if not self.find_bar.winfo_ismapped():
             self.find_bar.pack(side="top", fill="x", before=self.editor)
         self.find_bar.open(replace)
+
+    def _toggle_list(self, style: str) -> None:
+        self.editor.toggle_list(style)
+        self._refresh_ui()
+        self.editor.text.focus_set()
 
     def _toggle(self, attr: str) -> None:
         self.editor.toggle(attr)

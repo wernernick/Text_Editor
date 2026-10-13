@@ -147,6 +147,9 @@ class Ribbon(ctk.CTkFrame):
             btn = _button(r, label, lambda k=key: a["align"](k), 70)
             btn.pack(side="left", padx=2)
             self.align_buttons[key] = btn
+        r = g.row()
+        _button(r, theme.BULLET_CHAR + " Aufzählung", a["list_bullet"], 110).pack(side="left", padx=2)
+        _button(r, "1. Nummerierung", a["list_number"], 120).pack(side="left", padx=2)
         self._separator(page)
 
         g = self._group(page, "Formatvorlagen")
