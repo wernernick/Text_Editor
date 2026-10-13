@@ -1,6 +1,7 @@
 """Dateisystem-Hilfen: zuletzt geöffnete Dateien, Autosave- und Backup-Pfade."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -50,8 +51,11 @@ def autosave_path(doc_path: str | None = None) -> Path:
     """Pfad für die Autosave-Datei eines Dokuments (oder eines unbenannten)."""
     folder = app_dir() / "autosave"
     folder.mkdir(parents=True, exist_ok=True)
-    name = Path(doc_path).stem if doc_path else "Unbenannt"
-    return folder / f"{name}.autosave.docx"
+    if not doc_path:
+        return folder / "Unbenannt.autosave.docx"
+    # Kurzer Hash des vollen Pfads, damit gleichnamige Dateien aus verschiedenen Ordnern sich nicht überschreiben.
+    digest = hashlib.sha1(os.path.abspath(doc_path).encode("utf-8")).hexdigest()[:8]
+    return folder / f"{Path(doc_path).stem}-{digest}.autosave.docx"
 
 
 def backup_file(path: str, keep: int = 5) -> Path | None:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 
 import docx
 from docx.oxml.ns import qn
@@ -133,7 +134,21 @@ def save_docx(doc: Document, path: str) -> None:
                 out_run.font.size = Pt(run.font_size)
             if run.color:
                 out_run.font.color.rgb = RGBColor.from_string(run.color.lstrip("#").upper())
+    _atomic_save(target, path)
+    doc.path = os.path.abspath(path)
+
+
+def _atomic_save(target, path: str) -> None:
+    """Schreibt erst in eine Temp-Datei und ersetzt dann das Ziel: ein Absturz beim Speichern
+    zerstört so nie die vorhandene Datei."""
     folder = os.path.dirname(os.path.abspath(path))
     os.makedirs(folder, exist_ok=True)
-    target.save(path)
-    doc.path = os.path.abspath(path)
+    fd, tmp = tempfile.mkstemp(prefix=".~", suffix=".docx", dir=folder)
+    os.close(fd)
+    try:
+        target.save(tmp)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise

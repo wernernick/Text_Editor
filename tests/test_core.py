@@ -62,7 +62,9 @@ def test_recent_files_and_backup(tmp_path, monkeypatch):
     file_manager.add_recent_file(str(f2))
     file_manager.add_recent_file(str(f1))
     assert file_manager.get_recent_files() == [str(f1.resolve()), str(f2.resolve())]
-    assert file_manager.autosave_path(str(f1)).name == "a.autosave.docx"
+    assert file_manager.autosave_path(str(f1)).name.startswith("a-")
+    assert file_manager.autosave_path(str(f1)) != file_manager.autosave_path(str(tmp_path / "x" / "a.docx"))
+    assert file_manager.autosave_path(None).name == "Unbenannt.autosave.docx"
     backup = file_manager.backup_file(str(f1))
     assert backup is not None and backup.exists()
     assert file_manager.backup_file(str(tmp_path / "fehlt.docx")) is None
