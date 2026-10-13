@@ -1,6 +1,7 @@
 """Lesen und Schreiben von .docx-Dateien über python-docx."""
 from __future__ import annotations
 
+import io
 import os
 import tempfile
 
@@ -14,7 +15,11 @@ from docx.shared import Pt, RGBColor
 from docx.table import Table as DocxTable
 from docx.text.paragraph import Paragraph as DocxParagraph
 
-from core.document_model import LIST_TYPES, MAX_LIST_LEVEL, Document, Paragraph, Run, Table, TableCell
+from core.document_model import (
+    LIST_TYPES, MAX_LIST_LEVEL, Document, Image, Paragraph, Run, Table, TableCell,
+)
+
+EMU_PER_PT = 12700
 
 _ALIGN_TO_DOCX = {
     "left": WD_ALIGN_PARAGRAPH.LEFT,
@@ -136,6 +141,28 @@ def _iter_blocks(source):
             yield DocxTable(child, source)
 
 
+def _read_images(para) -> list[Image]:
+    """Eingebettete Bilder (w:drawing mit a:blip) eines Absatzes."""
+    images: list[Image] = []
+    for drawing in para._p.iter(qn("w:drawing")):
+        blip = next(drawing.iter(qn("a:blip")), None)
+        r_id = blip.get(qn("r:embed")) if blip is not None else None
+        if not r_id:
+            continue
+        try:
+            part = para.part.related_parts[r_id]
+        except KeyError:
+            continue
+        extent = next(drawing.iter(qn("wp:extent")), None)
+        width = height = None
+        if extent is not None:
+            width = int(extent.get("cx", 0)) / EMU_PER_PT or None
+            height = int(extent.get("cy", 0)) / EMU_PER_PT or None
+        name = os.path.basename(getattr(part, "partname", "") or "") or "bild.png"
+        images.append(Image(data=part.blob, filename=name, width_pt=width, height_pt=height))
+    return images
+
+
 def load_docx(path: str) -> Document:
     """Lädt eine .docx-Datei in das Dokumentmodell."""
     source = docx.Document(path)
@@ -143,8 +170,13 @@ def load_docx(path: str) -> Document:
     for block in _iter_blocks(source):
         if isinstance(block, DocxTable):
             paragraphs.append(Paragraph(table=_read_table(block)))
-        else:
-            paragraphs.append(_read_paragraph(block))
+            continue
+        model_para = _read_paragraph(block)
+        images = _read_images(block)
+        if model_para.text or not images:
+            paragraphs.append(model_para)
+        # Bilder werden zu eigenen Blöcken hinter dem Text des Absatzes
+        paragraphs.extend(Paragraph(image=img, alignment=model_para.alignment) for img in images)
     if not paragraphs:
         paragraphs.append(Paragraph(runs=[]))
     return Document(paragraphs=paragraphs, path=os.path.abspath(path))
@@ -194,12 +226,21 @@ def _write_table(target, table: Table) -> None:
         tr_pr.append(OxmlElement("w:tblHeader"))
 
 
+def _write_image(target, para: Paragraph) -> None:
+    width, height = para.image.display_size_pt()
+    out = target.add_paragraph()
+    out.alignment = _ALIGN_TO_DOCX.get(para.alignment, WD_ALIGN_PARAGRAPH.LEFT)
+    out.add_run().add_picture(io.BytesIO(para.image.data), width=Pt(width), height=Pt(height))
+
+
 def save_docx(doc: Document, path: str) -> None:
     """Speichert das Dokumentmodell als .docx-Datei."""
     target = docx.Document()
     for para in doc.paragraphs:
         if para.table is not None:
             _write_table(target, para.table)
+        elif para.image is not None:
+            _write_image(target, para)
         else:
             _write_paragraph(target.add_paragraph(), para, target)
     _atomic_save(target, path)
