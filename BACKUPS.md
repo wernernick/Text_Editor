@@ -5,5 +5,6 @@ Zurück zu einem Stand: `git checkout <Commit>`. Die .exe liegt im verlinkten Bu
 
 | Version | Commit | Datum (UTC) | Inhalt | Windows-Build |
 |---|---|---|---|---|
+| v0.3 | `4658499` | 2026-10-13 12:14 | Aufzählungen/Nummerierung (Core #4 + UI), Suchen & Ersetzen mit Strg+F/Strg+H (#5, #6), stabilere Windows-Tests (#7) | [Lauf](https://github.com/wernernick/Text_Editor/actions/runs/38395537776) |
 | v0.2 | `fbdd99b` | 2026-10-13 11:57 | Cyber-Oberfläche NEON//WRITE: Ribbon, Formatierung, Ausrichtung, Überschriften, Zoom, Statusleiste, .docx öffnen/speichern (#2) | [Lauf #2](https://github.com/wernernick/Text_Editor/actions/runs/38393828872) |
 | v0.1 | `d6422af` | 2026-10-13 11:53 | Grundgerüst + Core-Engine: Dokumentmodell, .docx-Import/Export, Dateimanager, build_exe.py (#1) | [Lauf #1](https://github.com/wernernick/Text_Editor/actions/runs/38393319357) |
