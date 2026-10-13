@@ -1,0 +1,112 @@
+"""UI-Tests: Konvertierung Text-Widget <-> Document und DOCX-Rundreise.
+
+Braucht ein Display (unter Linux z.B. `xvfb-run python -m pytest`); ohne Display wird übersprungen.
+"""
+import os
+import tempfile
+import unittest
+
+try:
+    from ui.app import TextEditorApp
+    _app = TextEditorApp()
+    _app.withdraw()
+    _app.destroy()
+    HAS_DISPLAY = True
+except Exception:  # noqa: BLE001 - kein Display / kein tkinter
+    HAS_DISPLAY = False
+
+from core.document_model import Document, Paragraph, Run
+
+
+@unittest.skipUnless(HAS_DISPLAY, "kein Display für Tk verfügbar")
+class EditorConversionTest(unittest.TestCase):
+    def setUp(self):
+        self.app = TextEditorApp()
+        self.app.withdraw()
+        self.editor = self.app.editor
+
+    def tearDown(self):
+        self.app.dirty = False
+        self.app.destroy()
+
+    def _sample(self):
+        return Document(paragraphs=[
+            Paragraph(runs=[Run("Titel")], style="Heading 1", alignment="center"),
+            Paragraph(runs=[Run("Hallo "), Run("fett", bold=True), Run(" und "),
+                            Run("bunt", italic=True, color="#ff2bd6", font_size=14, font_family="Arial")]),
+            Paragraph(runs=[]),
+            Paragraph(runs=[Run("Ende", underline=True)], alignment="right"),
+        ])
+
+    def test_roundtrip_model(self):
+        self.editor.load_document(self._sample())
+        doc = self.app.build_document()
+        self.assertEqual(doc.plain_text(), "Titel\nHallo fett und bunt\n\nEnde")
+        self.assertEqual(doc.paragraphs[0].style, "Heading 1")
+        self.assertEqual(doc.paragraphs[0].alignment, "center")
+        self.assertEqual(doc.paragraphs[3].alignment, "right")
+        runs = doc.paragraphs[1].runs
+        self.assertEqual([r.text for r in runs], ["Hallo ", "fett", " und ", "bunt"])
+        self.assertTrue(runs[1].bold)
+        self.assertEqual((runs[3].italic, runs[3].color, runs[3].font_size, runs[3].font_family),
+                         (True, "#ff2bd6", 14, "Arial"))
+        self.assertTrue(doc.paragraphs[3].runs[0].underline)
+
+    def test_toggle_bold_on_selection(self):
+        self.editor.load_document(Document.from_text("abc def"))
+        self.editor.text.tag_add("sel", "1.0", "1.3")
+        self.editor.toggle("bold")
+        runs = self.app.build_document().paragraphs[0].runs
+        self.assertEqual([(r.text, r.bold) for r in runs], [("abc", True), (" def", False)])
+        # erneut umschalten -> wieder normal und zusammengefasst
+        self.editor.toggle("bold")
+        runs = self.app.build_document().paragraphs[0].runs
+        self.assertEqual([(r.text, r.bold) for r in runs], [("abc def", False)])
+
+    def test_typing_uses_typing_format(self):
+        self.editor.clear()
+        self.editor.apply_format(italic=True)
+        self.editor.text.insert("insert", "kursiv")
+        runs = self.app.build_document().paragraphs[0].runs
+        self.assertEqual([(r.text, r.italic) for r in runs], [("kursiv", True)])
+        self.assertEqual(self.editor.stats(), (1, 6))
+
+    def test_alignment_and_style(self):
+        self.editor.load_document(Document.from_text("eins\nzwei"))
+        self.editor.text.mark_set("insert", "2.1")
+        self.editor.set_alignment("justify")
+        self.editor.set_style("Heading 2")
+        doc = self.app.build_document()
+        self.assertEqual((doc.paragraphs[0].alignment, doc.paragraphs[0].style), ("left", "Normal"))
+        self.assertEqual((doc.paragraphs[1].alignment, doc.paragraphs[1].style), ("justify", "Heading 2"))
+
+    def test_docx_roundtrip(self):
+        self.editor.load_document(self._sample())
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "t.docx")
+            self.assertTrue(self.app._write(path))
+            self.app.new_document()
+            self.assertTrue(self.app.load_path(path))
+        doc = self.app.build_document()
+        self.assertEqual(doc.plain_text(), "Titel\nHallo fett und bunt\n\nEnde")
+        self.assertTrue(doc.paragraphs[1].runs[1].bold)
+        self.assertEqual(doc.paragraphs[0].style, "Heading 1")
+
+    def test_return_after_heading_is_normal(self):
+        self.editor.load_document(Document(paragraphs=[Paragraph([Run("Kopf")], style="Heading 1")]))
+        self.editor.text.mark_set("insert", "1.end")
+        self.editor.text.insert("insert", "\n")
+        self.editor._after_return()
+        self.editor.text.insert("insert", "Text")
+        doc = self.app.build_document()
+        self.assertEqual([p.style for p in doc.paragraphs], ["Heading 1", "Normal"])
+
+    def test_zoom(self):
+        self.app._zoom_step(1)
+        self.assertEqual(self.editor.zoom, 110)
+        self.app._set_zoom(100)
+        self.assertEqual(self.editor.zoom, 100)
+
+
+if __name__ == "__main__":
+    unittest.main()
