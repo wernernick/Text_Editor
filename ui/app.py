@@ -42,7 +42,7 @@ class TextEditorApp(ctk.CTk):
     def __init__(self):
         ctk.set_appearance_mode("dark")
         super().__init__(fg_color=theme.BG_APP)
-        self.geometry("1200x780")
+        self.geometry("1280x800")
         self.minsize(820, 520)
         self.path: str | None = None
         self.dirty = False
@@ -78,6 +78,11 @@ class TextEditorApp(ctk.CTk):
             "zoom_step": self._zoom_step, "zoom_reset": lambda: self._set_zoom(100),
             "list_bullet": lambda: self._toggle_list("List Bullet"),
             "list_number": lambda: self._toggle_list("List Number"),
+            "undo": self._undo, "redo": self._redo,
+            "cut": lambda: self._clipboard("<<Cut>>"), "copy": lambda: self._clipboard("<<Copy>>"),
+            "paste": lambda: self._clipboard("<<Paste>>"),
+            "font_step": self._font_step, "case_menu": self.show_case_menu,
+            "clear_format": self._clear_format,
             "find": lambda: self.show_find(False), "replace": lambda: self.show_find(True),
             "page_mode": lambda label: self.editor.set_page_mode("paper" if label == "Papier" else "neon"),
             "toggle_wrap": self._toggle_wrap, "toggle_status": self._toggle_status,
@@ -99,6 +104,14 @@ class TextEditorApp(ctk.CTk):
             self.bind(seq, lambda _e, f=func: f())
         self.editor.text.bind("<Control-Shift-S>", lambda _e: (self.save_document_as(), "break")[1])
         self.editor.text.bind("<Control-Shift-L>", lambda _e: (self._toggle_list("List Bullet"), "break")[1])
+        self.editor.text.bind("<Control-greater>", lambda _e: (self._font_step(1), "break")[1])
+        self.editor.text.bind("<Control-less>", lambda _e: (self._font_step(-1), "break")[1])
+        self.editor.text.bind("<Control-bracketright>", lambda _e: (self._font_step(1), "break")[1])
+        self.editor.text.bind("<Control-bracketleft>", lambda _e: (self._font_step(-1), "break")[1])
+        self.editor.text.bind("<Control-space>", lambda _e: (self._clear_format(), "break")[1])
+        self.editor.text.bind("<Shift-F3>", lambda _e: (self._change_case("cycle"), "break")[1])
+        self.editor.text.bind("<Button-3>", self.show_context_menu)
+        self.editor.text.bind("<Control-a>", lambda _e: (self.editor.text.tag_add("sel", "1.0", "end-1c"), "break")[1])
         self.editor.text.bind("<Control-y>", lambda _e: (self._redo(), "break")[1])
         for i, style in enumerate(("Heading 1", "Heading 2", "Heading 3"), start=1):
             self.editor.text.bind(f"<Control-Alt-Key-{i}>", lambda _e, s=style: (self._set_style(s), "break")[1])
@@ -112,6 +125,78 @@ class TextEditorApp(ctk.CTk):
         self.editor.toggle_list(style)
         self._refresh_ui()
         self.editor.text.focus_set()
+
+    def _undo(self) -> None:
+        try:
+            self.editor.text.edit_undo()
+        except tk.TclError:
+            pass
+        self.editor.text.focus_set()
+
+    def _clipboard(self, event: str) -> None:
+        self.editor.text.focus_set()
+        self.editor.text.event_generate(event)
+
+    def _font_step(self, direction: int) -> None:
+        self.editor.step_font_size(direction)
+        self._refresh_ui()
+        self.editor.text.focus_set()
+
+    def _clear_format(self) -> None:
+        self.editor.clear_format()
+        self._refresh_ui()
+        self.editor.text.focus_set()
+
+    def _change_case(self, mode: str) -> None:
+        self.editor.change_case(mode)
+        self._refresh_ui()
+        self.editor.text.focus_set()
+
+    def _menu(self) -> tk.Menu:
+        return tk.Menu(self, tearoff=0, bg=theme.BG_RIBBON, fg=theme.TEXT,
+                       activebackground=theme.BG_BUTTON_HOVER, activeforeground=theme.ACCENT,
+                       disabledforeground=theme.TEXT_MUTED, borderwidth=1, relief="solid",
+                       font=theme.ui_font(11))
+
+    def show_case_menu(self, anchor=None) -> None:
+        menu = self._menu()
+        for label, mode in (("GROSSBUCHSTABEN", "upper"), ("kleinbuchstaben", "lower"),
+                            ("Jedes Wort Großschreiben", "title"), ("Umschalten (Umschalt+F3)", "cycle")):
+            menu.add_command(label=label, command=lambda m=mode: self._change_case(m),
+                             state="normal" if self.editor.has_selection() else "disabled")
+        widget = anchor or self.ribbon
+        menu.tk_popup(widget.winfo_rootx(), widget.winfo_rooty() + widget.winfo_height())
+
+    def build_context_menu(self) -> tk.Menu:
+        """Rechtsklick-Menü wie in Word."""
+        has_sel = "normal" if self.editor.has_selection() else "disabled"
+        menu = self._menu()
+        menu.add_command(label="✂  Ausschneiden", accelerator="Strg+X", state=has_sel,
+                         command=lambda: self._clipboard("<<Cut>>"))
+        menu.add_command(label="⧉  Kopieren", accelerator="Strg+C", state=has_sel,
+                         command=lambda: self._clipboard("<<Copy>>"))
+        menu.add_command(label="📋  Einfügen", accelerator="Strg+V", command=lambda: self._clipboard("<<Paste>>"))
+        menu.add_separator()
+        menu.add_command(label="F  Fett", accelerator="Strg+B", command=lambda: self._toggle("bold"))
+        menu.add_command(label="K  Kursiv", accelerator="Strg+I", command=lambda: self._toggle("italic"))
+        menu.add_command(label="U  Unterstrichen", accelerator="Strg+U", command=lambda: self._toggle("underline"))
+        menu.add_command(label="⌫  Formatierung löschen", accelerator="Strg+Leertaste", command=self._clear_format)
+        menu.add_separator()
+        menu.add_command(label="⌕  Suchen…", accelerator="Strg+F", command=lambda: self.show_find(False))
+        menu.add_command(label="☰  Alles markieren", accelerator="Strg+A",
+                         command=lambda: self.editor.text.tag_add("sel", "1.0", "end-1c"))
+        return menu
+
+    def show_context_menu(self, event) -> str:
+        # Klick außerhalb der Auswahl setzt den Cursor dorthin (wie in Word)
+        index = self.editor.text.index(f"@{event.x},{event.y}")
+        if not (self.editor.has_selection()
+                and self.editor.text.compare("sel.first", "<=", index)
+                and self.editor.text.compare(index, "<", "sel.last")):
+            self.editor.text.tag_remove("sel", "1.0", "end")
+            self.editor.text.mark_set("insert", index)
+        self.build_context_menu().tk_popup(event.x_root, event.y_root)
+        return "break"
 
     def _toggle(self, attr: str) -> None:
         self.editor.toggle(attr)

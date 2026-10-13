@@ -40,6 +40,7 @@ class Ribbon(ctk.CTkFrame):
         self.actions = actions
         self.toggle_buttons: dict[str, ctk.CTkButton] = {}
         self.align_buttons: dict[str, ctk.CTkButton] = {}
+        self.quick_buttons: dict[str, ctk.CTkButton] = {}
 
         header = ctk.CTkFrame(self, fg_color=theme.BG_RIBBON, corner_radius=0)
         header.pack(side="top", fill="x")
@@ -47,6 +48,18 @@ class Ribbon(ctk.CTkFrame):
             header, text="◢ NEON//WRITE", font=theme.ui_font(14, "bold"),
             text_color=theme.ACCENT_2,
         ).pack(side="left", padx=(12, 18), pady=4)
+        # Schnellzugriff wie in Word: Rückgängig, Wiederholen, Zwischenablage
+        quick = ctk.CTkFrame(header, fg_color="transparent")
+        quick.pack(side="right", padx=8)
+        for label, key, tip in (("↶", "undo", "Rückgängig (Strg+Z)"), ("↷", "redo", "Wiederholen (Strg+Y)"),
+                                ("✂", "cut", "Ausschneiden (Strg+X)"), ("⧉", "copy", "Kopieren (Strg+C)"),
+                                ("📋", "paste", "Einfügen (Strg+V)")):
+            btn = ctk.CTkButton(
+                quick, text=label, width=30, height=24, corner_radius=4, font=theme.ui_font(13),
+                fg_color="transparent", hover_color=theme.BG_BUTTON_HOVER, text_color=theme.TEXT,
+                command=actions[key])
+            btn.pack(side="left", padx=1)
+            self.quick_buttons[key] = btn
 
         self.tab_buttons: dict[str, ctk.CTkButton] = {}
         self.pages: dict[str, ctk.CTkFrame] = {}
@@ -141,6 +154,12 @@ class Ribbon(ctk.CTkFrame):
             self.toggle_buttons[key] = btn
         self.color_button = _button(r, "A ▾", a["color"], 46)
         self.color_button.pack(side="left", padx=2)
+        _button(r, "A⁺", lambda: a["font_step"](1), 32).pack(side="left", padx=1)
+        _button(r, "A⁻", lambda: a["font_step"](-1), 32).pack(side="left", padx=1)
+        self.case_button = _button(r, "Aa ▾", None, 44)
+        self.case_button.configure(command=lambda: a["case_menu"](self.case_button))
+        self.case_button.pack(side="left", padx=1)
+        _button(r, "⌫", a["clear_format"], 32).pack(side="left", padx=1)
         self._separator(page)
 
         g = self._group(page, "Absatz")
