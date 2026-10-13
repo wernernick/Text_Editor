@@ -45,6 +45,20 @@ PARAGRAPH_STYLES = {
     "List Bullet": "list",   # Listen: Einzug + Aufzählungszeichen als Overlay
     "List Number": "list",
 }
+# Seitenfarben: "neon" (dunkle Cyber-Seite) und "paper" (helle Seite wie gedruckt)
+PAGE_PALETTES = {
+    "neon": {
+        "page": BG_PAGE, "text": TEXT_PAGE, "selection": SELECTION_BG, "cursor": ACCENT,
+        "border": ACCENT, "marker": ACCENT,
+        "headings": {"Heading 1": ACCENT, "Heading 2": ACCENT_2, "Heading 3": "#9fb4ff", "Title": ACCENT},
+    },
+    "paper": {
+        "page": "#fbfcff", "text": "#1a1f2b", "selection": "#bdeffa", "cursor": "#c2109a",
+        "border": ACCENT_2, "marker": "#0086a8",
+        "headings": {"Heading 1": "#0086a8", "Heading 2": "#b0128f", "Heading 3": "#3b4f9c", "Title": "#0086a8"},
+    },
+}
+
 LIST_STYLES = ("List Bullet", "List Number")
 LIST_INDENT = 28
 BULLET_CHAR = "◆"

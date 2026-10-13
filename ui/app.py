@@ -14,6 +14,7 @@ from ui.find_dialog import FindBar
 from ui.ribbon import Ribbon
 
 APP_NAME = "NEON//WRITE"
+AUTOSAVE_MS = 60_000
 FILE_TYPES = [("Word-Dokument", "*.docx"), ("Alle Dateien", "*.*")]
 
 
@@ -56,6 +57,7 @@ class TextEditorApp(ctk.CTk):
         self.find_bar.on_close = self.find_bar.pack_forget
 
         self._bind_shortcuts()
+        self._autosave_job = self.after(AUTOSAVE_MS, self._autosave)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self._update_title()
         self._refresh_ui()
@@ -64,7 +66,7 @@ class TextEditorApp(ctk.CTk):
     # ---------------------------------------------------------- Aktionen
     def _actions(self) -> dict:
         return {
-            "new": self.new_document, "open": self.open_document,
+            "new": self.new_document, "open": self.open_document, "recent": self.show_recent_menu,
             "save": self.save_document, "save_as": self.save_document_as,
             "toggle": self._toggle, "font_family": self._set_font_family,
             "font_size": self._set_font_size, "color": self._choose_color,
@@ -77,6 +79,7 @@ class TextEditorApp(ctk.CTk):
             "list_bullet": lambda: self._toggle_list("List Bullet"),
             "list_number": lambda: self._toggle_list("List Number"),
             "find": lambda: self.show_find(False), "replace": lambda: self.show_find(True),
+            "page_mode": lambda label: self.editor.set_page_mode("paper" if label == "Papier" else "neon"),
             "toggle_wrap": self._toggle_wrap, "toggle_status": self._toggle_status,
         }
 
@@ -241,7 +244,55 @@ class TextEditorApp(ctk.CTk):
         self._update_title()
         self._refresh_ui()
         self.status.set_state("GEÖFFNET")
+        self._remember(path)
         return True
+
+    def _remember(self, path: str) -> None:
+        try:
+            from core.file_manager import add_recent_file
+            add_recent_file(path)
+        except Exception:  # noqa: BLE001 - Liste ist Komfort, darf nie stören
+            pass
+
+    def recent_files(self) -> list[str]:
+        try:
+            from core.file_manager import get_recent_files
+            return get_recent_files()
+        except Exception:  # noqa: BLE001
+            return []
+
+    def show_recent_menu(self, anchor=None) -> None:
+        menu = tk.Menu(self, tearoff=0, bg=theme.BG_RIBBON, fg=theme.TEXT, activebackground=theme.BG_BUTTON_HOVER,
+                       activeforeground=theme.ACCENT, borderwidth=1, relief="solid",
+                       font=theme.ui_font(11))
+        files = self.recent_files()
+        if not files:
+            menu.add_command(label="Keine zuletzt geöffneten Dateien", state="disabled")
+        for path in files:
+            menu.add_command(label=f"{os.path.basename(path)}   —   {os.path.dirname(path)}",
+                             command=lambda p=path: self._open_recent(p))
+        widget = anchor or self.ribbon
+        menu.tk_popup(widget.winfo_rootx(), widget.winfo_rooty() + widget.winfo_height())
+
+    def _open_recent(self, path: str) -> None:
+        if self._confirm_discard():
+            self.load_path(path)
+
+    def _autosave(self) -> None:
+        """Sichert ungespeicherte Änderungen regelmäßig in den Autosave-Ordner (Originaldatei bleibt unberührt)."""
+        self._autosave_job = self.after(AUTOSAVE_MS, self._autosave)
+        if not self.dirty:
+            return
+        try:
+            from core.docx_io import save_docx
+            from core.file_manager import autosave_path
+            target = autosave_path(self.path)
+            document = self.build_document()
+            save_docx(document, str(target))
+        except Exception:  # noqa: BLE001 - Autosave darf die Arbeit nie unterbrechen
+            self.status.set_state("AUTOSAVE FEHLGESCHLAGEN", ok=False)
+            return
+        self.status.set_state("AUTOGESICHERT " + datetime.datetime.now().strftime("%H:%M"))
 
     def save_document(self) -> bool:
         if not self.path:
@@ -263,8 +314,10 @@ class TextEditorApp(ctk.CTk):
     def _write(self, path: str) -> bool:
         try:
             from core.docx_io import save_docx
+            from core.file_manager import backup_file
             document = self.build_document()
             document.path = path
+            backup_file(path)  # vorherige Fassung sichern, bevor sie überschrieben wird
             save_docx(document, path)
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror(APP_NAME, f"Datei konnte nicht gespeichert werden:\n{exc}", parent=self)
@@ -274,15 +327,26 @@ class TextEditorApp(ctk.CTk):
         self.dirty = False
         self._update_title()
         self.status.set_state("GESPEICHERT")
+        self._remember(path)
         return True
 
     def on_close(self) -> None:
         if self._confirm_discard():
             self.destroy()
 
+    def destroy(self) -> None:
+        if getattr(self, "_autosave_job", None):
+            self.after_cancel(self._autosave_job)
+            self._autosave_job = None
+        super().destroy()
 
-def run() -> None:
+
+def run(argv: list[str] | None = None) -> None:
     app = TextEditorApp()
+    # Datei aus der Kommandozeile öffnen (z.B. "Öffnen mit" auf die .exe)
+    args = [a for a in (argv or []) if a.lower().endswith(".docx") and os.path.isfile(a)]
+    if args:
+        app.after(50, lambda: app.load_path(args[0]))
     # Für automatisierte Starttests: Fenster nach N Millisekunden schließen.
     autoclose = os.environ.get("TEXT_EDITOR_AUTOCLOSE_MS")
     if autoclose and autoclose.isdigit():

@@ -14,7 +14,7 @@ from ui.app import run  # noqa: E402
 
 
 def main() -> None:
-    run()
+    run(sys.argv[1:])
 
 
 if __name__ == "__main__":

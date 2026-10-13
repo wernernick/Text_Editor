@@ -6,6 +6,9 @@ import os
 import tempfile
 import unittest
 
+# App-Daten (zuletzt geöffnet, Autosave, Backups) der Tests nicht ins echte Home schreiben
+os.environ["TEXT_EDITOR_HOME"] = tempfile.mkdtemp(prefix="text_editor_test_")
+
 try:
     from ui.app import TextEditorApp
     _app = TextEditorApp()
@@ -173,6 +176,32 @@ class EditorConversionTest(unittest.TestCase):
         self.assertEqual([p.list_type for p in self.app.build_document().paragraphs],
                          ["bullet", "number"])
         self.assertEqual(self.editor.list_markers(), [(1, "◆"), (2, "1.")])
+
+    def test_recent_backup_and_autosave(self):
+        from core.file_manager import app_dir, autosave_path
+        self.editor.load_document(Document.from_text("eins"))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "r.docx")
+            self.assertTrue(self.app._write(path))
+            self.assertEqual(self.app.recent_files()[0], os.path.abspath(path))
+            self.editor.text.insert("end", " zwei")
+            self.assertTrue(self.app._write(path))  # zweites Speichern legt Backup an
+            self.assertTrue(list((app_dir() / "backups").glob("r.*.docx")))
+            self.editor.text.insert("end", " drei")
+            self.app.update()  # <<Modified>> kommt asynchron
+            self.assertTrue(self.app.dirty)
+            self.app._autosave()
+            self.assertTrue(autosave_path(path).exists())
+            self.assertTrue(self.app.dirty)  # Autosave ersetzt kein echtes Speichern
+
+    def test_page_mode(self):
+        self.editor.load_document(Document(paragraphs=[Paragraph([Run("K")], style="Heading 1")]))
+        self.app.ribbon.page_mode.set("Papier")
+        self.app._actions()["page_mode"]("Papier")
+        self.assertEqual(self.editor.text.cget("bg"), "#fbfcff")
+        self.assertEqual(self.editor.text.tag_cget("style|Heading 1", "foreground"), "#0086a8")
+        self.app._actions()["page_mode"]("Neon")
+        self.assertEqual(self.editor.text.cget("bg"), "#0b1018")
 
     def test_zoom(self):
         self.app._zoom_step(1)
