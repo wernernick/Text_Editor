@@ -1,6 +1,7 @@
 """Datenmodell eines Dokuments: Dokument -> Absätze -> Runs (gleich formatierter Text)."""
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -43,6 +44,7 @@ class Paragraph:
     list_type: Optional[str] = None  # None | "bullet" | "number"
     list_level: int = 0  # Einrückungsebene der Liste, 0..MAX_LIST_LEVEL
     table: Optional["Table"] = None  # gesetzt = dieser Block ist eine Tabelle, runs werden ignoriert
+    image: Optional["Image"] = None  # gesetzt = dieser Block ist ein Bild, runs werden ignoriert
 
     @property
     def text(self) -> str:
@@ -59,6 +61,47 @@ class Paragraph:
             else:
                 merged.append(Run(**vars(run)))
         self.runs = merged
+
+
+@dataclass
+class Image:
+    """Ein Bild als eigener Block (Bytes im Dokument, damit nichts von externen Dateien abhängt)."""
+
+    data: bytes
+    filename: str = "bild.png"
+    width_pt: Optional[float] = None  # None = Originalgröße
+    height_pt: Optional[float] = None  # None = proportional zur Breite
+
+    @classmethod
+    def from_file(cls, path: str, max_width_pt: Optional[float] = None) -> "Image":
+        """Lädt ein Bild (PNG, JPEG, GIF, BMP, TIFF); zu breite Bilder werden proportional verkleinert."""
+        with open(path, "rb") as handle:
+            data = handle.read()
+        image = cls(data=data, filename=os.path.basename(path))
+        width, height = image.native_size_pt()
+        if max_width_pt and width > max_width_pt:
+            image.width_pt = max_width_pt
+            image.height_pt = height * max_width_pt / width
+        return image
+
+    def native_size_pt(self) -> tuple[float, float]:
+        """Originalgröße in Punkt (aus Pixeln und DPI der Datei). Wirft ValueError bei unbekanntem Format."""
+        from docx.image.image import Image as DocxImage  # python-docx kennt die Bildformate bereits
+        from docx.image.exceptions import UnrecognizedImageError
+
+        try:
+            info = DocxImage.from_blob(self.data)
+        except UnrecognizedImageError as exc:
+            raise ValueError(f"Unbekanntes Bildformat: {self.filename}") from exc
+        return info.px_width * 72.0 / (info.horz_dpi or 72), info.px_height * 72.0 / (info.vert_dpi or 72)
+
+    def display_size_pt(self) -> tuple[float, float]:
+        """Größe, in der das Bild angezeigt und gespeichert wird."""
+        native_w, native_h = self.native_size_pt()
+        width = self.width_pt or native_w
+        if self.height_pt:
+            return width, self.height_pt
+        return width, native_h * width / native_w if native_w else native_h
 
 
 @dataclass
@@ -164,6 +207,11 @@ class Document:
         self.paragraphs.insert(index, Paragraph(table=table))
         return table
 
+    def insert_image(self, index: int, image: Image, alignment: str = "center") -> Image:
+        """Fügt an Position index einen Bild-Block ein."""
+        self.paragraphs.insert(index, Paragraph(image=image, alignment=alignment))
+        return image
+
     def list_labels(self) -> list[Optional[str]]:
         """Aufzählungszeichen bzw. Nummer je Absatz ("•", "1.", "a." ...), None ohne Liste.
 
@@ -173,7 +221,7 @@ class Document:
         labels: list[Optional[str]] = []
         counters = [0] * (MAX_LIST_LEVEL + 1)
         for para in self.paragraphs:
-            if para.list_type not in LIST_TYPES or para.table is not None:
+            if para.list_type not in LIST_TYPES or para.table is not None or para.image is not None:
                 counters = [0] * (MAX_LIST_LEVEL + 1)
                 labels.append(None)
                 continue
