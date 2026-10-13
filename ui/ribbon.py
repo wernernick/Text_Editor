@@ -165,6 +165,13 @@ class Ribbon(ctk.CTkFrame):
             _button(r, theme.STYLE_LABELS[style].replace("Überschrift", "Ü"),
                     lambda s=style: a["style"](s), 78).pack(side="left", padx=2)
 
+        self._separator(page)
+        g = self._group(page, "Bearbeiten")
+        r = g.row()
+        _button(r, "⌕ Suchen", a["find"], 96).pack(side="left", padx=2)
+        r = g.row()
+        _button(r, "⇄ Ersetzen", a["replace"], 96).pack(side="left", padx=2)
+
     # ---------------------------------------------------------- Einfügen
     def _build_insert(self, page) -> None:
         a = self.actions

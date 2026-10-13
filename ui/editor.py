@@ -304,6 +304,16 @@ class DocumentEditor(ctk.CTkFrame):
         self.text.edit_reset()
         self.typing_format = CharFormat()
 
+    def replace_range(self, start: str, end: str, new_text: str) -> None:
+        """Ersetzt Text und übernimmt Zeichen-/Absatzformat vom Anfang des Bereichs."""
+        tags = tuple(t for t in self.text.tag_names(start)
+                     if t.startswith((RUN_PREFIX, ALIGN_PREFIX, STYLE_PREFIX)))
+        start = self.text.index(start)
+        self.text.delete(start, end)
+        if new_text:
+            self.text.tk.call(self._orig_cmd, "insert", start, new_text, tags)
+        self.text.edit_modified(True)
+
     def insert_plain(self, text: str) -> None:
         self.text.insert("insert", text)
 

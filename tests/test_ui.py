@@ -101,6 +101,28 @@ class EditorConversionTest(unittest.TestCase):
         doc = self.app.build_document()
         self.assertEqual([p.style for p in doc.paragraphs], ["Heading 1", "Normal"])
 
+    def test_find_and_replace(self):
+        self.editor.load_document(Document(paragraphs=[
+            Paragraph([Run("Neon "), Run("neon", bold=True), Run(" NEON")])]))
+        self.app.show_find(replace=True)
+        bar = self.app.find_bar
+        bar.find_entry.insert(0, "neon")
+        bar.refresh()
+        self.assertEqual(len(bar.matches), 3)
+        bar.case_var.set(True)
+        bar.refresh()
+        self.assertEqual(len(bar.matches), 1)
+        bar.case_var.set(False)
+        bar.replace_entry.insert(0, "Cyber")
+        self.assertEqual(bar.replace_all(), 3)
+        doc = self.app.build_document()
+        self.assertEqual(doc.plain_text(), "Cyber Cyber Cyber")
+        # Formatierung des ersetzten Wortes bleibt erhalten
+        self.assertEqual([(r.text, r.bold) for r in doc.paragraphs[0].runs],
+                         [("Cyber ", False), ("Cyber", True), (" Cyber", False)])
+        bar.close()
+        self.assertEqual(self.editor.text.tag_ranges("find|hit"), ())
+
     def test_zoom(self):
         self.app._zoom_step(1)
         self.assertEqual(self.editor.zoom, 110)
