@@ -250,6 +250,91 @@ class EditorConversionTest(unittest.TestCase):
         self.app._undo()
         self.assertEqual(self.editor.get_plain_text(), "kopier mich")
 
+    def test_list_levels(self):
+        self.editor.load_document(Document.from_text("a\nb\nc\nd\ne"))
+        self.editor.text.tag_add("sel", "1.0", "5.1")
+        self.app._toggle_list("List Number")
+        self.editor.text.tag_remove("sel", "1.0", "end")
+        for line in (2, 3):
+            self.editor.text.mark_set("insert", f"{line}.0")
+            self.assertTrue(self.editor.handle_tab())
+        self.editor.text.mark_set("insert", "3.0")
+        self.assertTrue(self.editor.handle_tab())  # Ebene 2
+        self.editor.text.mark_set("insert", "3.0")
+        self.assertTrue(self.editor.handle_tab())  # bleibt bei Ebene 2 (Maximum)
+        self.assertEqual([m for _l, m in self.editor.list_markers()], ["1.", "a.", "i.", "2.", "3."])
+        self.app.deiconify()
+        self.app.update()
+        xs = [self.editor.text.bbox(f"{n}.0")[0] for n in (1, 2, 3)]
+        self.assertLess(xs[0], xs[1])  # tiefere Ebene ist weiter eingerückt
+        self.assertLess(xs[1], xs[2])
+        self.editor.text.mark_set("insert", "3.1")
+        self.assertFalse(self.editor.handle_tab())  # mitten im Text: normales Tab
+        self.assertTrue(self.editor.handle_tab(shift=True))
+        doc = self.app.build_document()
+        self.assertEqual([p.list_level for p in doc.paragraphs], [0, 1, 1, 0, 0])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "lv.docx")
+            self.assertTrue(self.app._write(path))
+            self.assertTrue(self.app.load_path(path))
+        self.assertEqual([m for _l, m in self.editor.list_markers()], ["1.", "a.", "b.", "2.", "3."])
+        # Liste ausschalten entfernt auch die Ebene
+        self.editor.text.mark_set("insert", "2.0")
+        self.app._toggle_list("List Number")
+        self.assertEqual(self.editor.list_level(2), 0)
+
+    def test_tables(self):
+        from core.document_model import Table
+        table = Table.from_texts([["Name", "Wert"], ["A", "1\n2"]], header_row=True)
+        table.rows[0][0].paragraphs[0].runs[0].bold = True
+        self.editor.load_document(Document(paragraphs=[
+            Paragraph([Run("Vorher")]), Paragraph(table=table), Paragraph([Run("Nachher")])]))
+        self.assertEqual(len(self.editor.tables), 1)
+        widget = self.editor.table_on_line(2)
+        self.assertEqual(widget.texts(), [["Name", "Wert"], ["A", "1 ¶ 2"]])
+        doc = self.app.build_document()
+        self.assertEqual([p.table is not None for p in doc.paragraphs], [False, True, False])
+        out = doc.paragraphs[1].table
+        self.assertTrue(out.header_row)
+        self.assertEqual(out.texts(), [["Name", "Wert"], ["A", "1\n2"]])
+        self.assertTrue(out.rows[0][0].paragraphs[0].runs[0].bold)  # unverändert -> Format bleibt
+        # bearbeiten, Zeile/Spalte hinzufügen und entfernen
+        widget.cells[1][0].delete(0, "end")
+        widget.cells[1][0].insert(0, "B")
+        self.app.deiconify()
+        widget.cells[1][0].focus_force()
+        self.app.update()
+        self.assertIs(self.editor.active_table, widget)
+        self.app._table_op("insert_row")
+        self.app._table_op("insert_column")
+        self.assertEqual((widget.row_count, widget.col_count), (3, 3))
+        self.assertEqual(widget.texts()[1], ["B", "", "1 ¶ 2"])  # neue Spalte rechts der Zelle
+        widget.cells[0][1].focus_force()
+        self.app.update()
+        self.app._table_op("delete_column")  # entfernt die neue (fokussierte) Spalte
+        self.assertEqual(widget.col_count, 2)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "t.docx")
+            self.assertTrue(self.app._write(path))
+            self.assertTrue(self.app.load_path(path))
+        doc = self.app.build_document()
+        tables = [p.table for p in doc.paragraphs if p.table is not None]
+        self.assertEqual(len(tables), 1)
+        self.assertEqual(tables[0].texts()[1][0], "B")
+        self.assertEqual(tables[0].row_count, 3)
+        self.assertIn("Nachher", doc.plain_text())
+
+    def test_insert_table(self):
+        self.editor.load_document(Document.from_text("Text"))
+        self.editor.text.mark_set("insert", "1.end")
+        self.assertFalse(self.app.insert_table_from_spec("0x3"))
+        self.assertTrue(self.app.insert_table_from_spec("2x3"))
+        doc = self.app.build_document()
+        self.assertEqual(doc.paragraphs[0].text, "Text")
+        self.assertEqual((doc.paragraphs[1].table.row_count, doc.paragraphs[1].table.col_count), (2, 3))
+        self.app._actions()["page_mode"]("Papier")  # Tabellen übernehmen die Seitenfarbe
+        self.assertEqual(self.editor.table_on_line(2).cells[0][0].cget("bg"), "#fbfcff")
+
     def test_zoom(self):
         self.app._zoom_step(1)
         self.assertEqual(self.editor.zoom, 110)

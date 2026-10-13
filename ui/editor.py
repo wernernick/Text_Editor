@@ -14,10 +14,13 @@ from dataclasses import dataclass, replace
 import customtkinter as ctk
 
 from ui import theme
+from ui.table_widget import TableWidget
 
 RUN_PREFIX = "run|"
 ALIGN_PREFIX = "align|"
 STYLE_PREFIX = "style|"
+LEVEL_PREFIX = "level|"  # Listenebene 1..2 (Ebene 0 hat keinen Tag)
+PARA_PREFIXES = (ALIGN_PREFIX, STYLE_PREFIX, LEVEL_PREFIX)
 ALIGNMENTS = ("left", "center", "right", "justify")
 LIST_TYPE_TO_STYLE = {"bullet": "List Bullet", "number": "List Number"}
 STYLE_TO_LIST_TYPE = {v: k for k, v in LIST_TYPE_TO_STYLE.items()}
@@ -55,6 +58,8 @@ class DocumentEditor(ctk.CTkFrame):
         self.typing_format = CharFormat()
         self.palette = theme.PAGE_PALETTES["neon"]
         self._known_run_tags: set[str] = set()
+        self.tables: dict[str, TableWidget] = {}
+        self.active_table: TableWidget | None = None
 
         self.grid_columnconfigure(0, weight=1)
         self.grid_columnconfigure(2, weight=1)
@@ -119,6 +124,9 @@ class DocumentEditor(ctk.CTkFrame):
             for style in theme.PARAGRAPH_STYLES:
                 if theme.PARAGRAPH_STYLES[style]:
                     self.text.tag_raise(STYLE_PREFIX + style)
+            # Listenebenen (Einzug) liegen über den Listenvorlagen
+            for level in range(1, theme.MAX_LIST_LEVEL + 1):
+                self.text.tag_raise(LEVEL_PREFIX + str(level))
         return tag
 
     def _configure_style_tags(self) -> None:
@@ -139,6 +147,10 @@ class DocumentEditor(ctk.CTkFrame):
                       "bold" if bold else "normal"),
             )
             self.text.tag_raise(tag)
+        for level in range(1, theme.MAX_LIST_LEVEL + 1):
+            indent = round(theme.LIST_INDENT * (level + 1) * self.zoom / 100)
+            self.text.tag_configure(LEVEL_PREFIX + str(level), lmargin1=indent, lmargin2=indent)
+            self.text.tag_raise(LEVEL_PREFIX + str(level))
 
     def set_page_mode(self, mode: str) -> None:
         """Seitenfarbe umschalten: "neon" oder "paper"."""
@@ -149,9 +161,13 @@ class DocumentEditor(ctk.CTkFrame):
                             selectbackground=pal["selection"], selectforeground=pal["text"])
         self._configure_style_tags()
         self.schedule_markers()
+        for table in self.tables.values():
+            table.apply_palette(pal)
 
     def set_zoom(self, zoom: int) -> None:
         self.zoom = zoom
+        for table in self.tables.values():
+            table.apply_palette(self.palette, zoom)
         self.schedule_markers()
         for tag in self._known_run_tags:
             self.text.tag_configure(tag, font=self._font_for(CharFormat.from_tag(tag)))
@@ -176,7 +192,7 @@ class DocumentEditor(ctk.CTkFrame):
             index = str(tk_.call(self._orig_cmd, "index", args[1]))
             line = index.split(".")[0]
             para_tags = [t for t in tk_.splitlist(tk_.call(self._orig_cmd, "tag", "names", f"{line}.0"))
-                         if t.startswith((ALIGN_PREFIX, STYLE_PREFIX))]
+                         if t.startswith(PARA_PREFIXES)]
             run_tag = self._ensure_run_tag(self.typing_format)
             tags = (run_tag, *para_tags)
             # insert index chars ?tagList chars tagList ...? -> nur einfache Form umschreiben
@@ -194,21 +210,61 @@ class DocumentEditor(ctk.CTkFrame):
         if self._marker_job is None:
             self._marker_job = self.text.after_idle(self._refresh_markers)
 
+    def list_level(self, line: int) -> int:
+        return int(self.paragraph_value(LEVEL_PREFIX, f"{line}.0", "0"))
+
     def list_markers(self) -> list[tuple[int, str]]:
-        """(Zeile, Markierung) für alle Listenabsätze; Nummern zählen fortlaufend."""
+        """(Zeile, Markierung) für alle Listenabsätze. Nummern zählen je Ebene fortlaufend
+        (1. / a. / i. wie in Word); eine tiefere Ebene beginnt nach jedem übergeordneten Punkt neu."""
         result = []
-        number = 0
+        counters = [0] * (theme.MAX_LIST_LEVEL + 1)
         last_line = int(self.text.index("end-1c").split(".")[0])
         for line in range(1, last_line + 1):
             style = self.paragraph_value(STYLE_PREFIX, f"{line}.0", "Normal")
-            if style == "List Number":
-                number += 1
-                result.append((line, f"{number}."))
+            if style not in theme.LIST_STYLES:
+                counters = [0] * (theme.MAX_LIST_LEVEL + 1)
+                continue
+            level = min(theme.MAX_LIST_LEVEL, self.list_level(line))
+            for deeper in range(level + 1, theme.MAX_LIST_LEVEL + 1):
+                counters[deeper] = 0
+            if style == "List Bullet":
+                result.append((line, theme.BULLET_CHARS[level]))
             else:
-                number = 0
-                if style == "List Bullet":
-                    result.append((line, theme.BULLET_CHAR))
+                counters[level] += 1
+                result.append((line, _number_label(counters[level], level)))
         return result
+
+    def change_list_level(self, delta: int) -> bool:
+        """Listenebene der markierten Listenabsätze ändern (Tab / Umschalt+Tab). False, wenn
+        keine Liste betroffen ist."""
+        lines = [n for n in self._selected_lines()
+                 if self.paragraph_value(STYLE_PREFIX, f"{n}.0", "Normal") in theme.LIST_STYLES]
+        if not lines:
+            return False
+        for line in lines:
+            level = max(0, min(theme.MAX_LIST_LEVEL, self.list_level(line) + delta))
+            self._set_level(line, level)
+        self.text.edit_modified(True)
+        self.schedule_markers()
+        return True
+
+    def _set_level(self, line: int, level: int) -> None:
+        start, end = f"{line}.0", f"{line}.0 lineend +1c"
+        for tag in self.text.tag_names():
+            if tag.startswith(LEVEL_PREFIX):
+                self.text.tag_remove(tag, start, end)
+        if level > 0:
+            self.text.tag_add(LEVEL_PREFIX + str(level), start, end)
+
+    def handle_tab(self, shift: bool = False) -> bool:
+        """Wie Word: Tab am Anfang eines Listenpunkts (oder über mehrere Zeilen markiert)
+        rückt die Liste ein, Umschalt+Tab rückt aus. Sonst normales Tab-Zeichen."""
+        multi_line = self.has_selection() and \
+            self.text.index("sel.first").split(".")[0] != self.text.index("sel.last").split(".")[0]
+        at_start = self.text.compare("insert", "==", "insert linestart")
+        if not (shift or multi_line or at_start):
+            return False
+        return self.change_list_level(-1 if shift else 1)
 
     def _refresh_markers(self) -> None:
         self._marker_job = None
@@ -440,9 +496,51 @@ class DocumentEditor(ctk.CTkFrame):
 
     def set_style(self, style: str) -> None:
         self._set_paragraph_tag(STYLE_PREFIX, style)
+        if style not in theme.LIST_STYLES:
+            for line in self._selected_lines():
+                self._set_level(line, 0)
+
+    # ------------------------------------------------------- Tabellen
+    def _create_table_widget(self, table, index: str) -> TableWidget:
+        widget = TableWidget(self.text, table, self.palette, self.zoom,
+                             on_focus=self._table_focused, on_change=self._table_changed)
+        self.text.window_create(index, window=widget, padx=2, pady=4)
+        self.tables[str(widget)] = widget
+        return widget
+
+    def _table_focused(self, widget: TableWidget) -> None:
+        self.active_table = widget
+
+    def _table_changed(self) -> None:
+        self.text.edit_modified(True)
+
+    def table_on_line(self, line: int) -> TableWidget | None:
+        for key, value, _index in self.text.dump(f"{line}.0", f"{line}.0 lineend", window=True):
+            if key == "window" and value in self.tables:
+                return self.tables[value]
+        return None
+
+    def insert_table(self, table) -> TableWidget:
+        """Fügt die Tabelle als eigenen Block unterhalb des aktuellen Absatzes ein."""
+        line = int(self.text.index("insert").split(".")[0])
+        if self.text.get(f"{line}.0", f"{line}.0 lineend") or self.table_on_line(line):
+            self.text.insert(f"{line}.0 lineend", "\n")
+            line += 1
+        self.text.edit_separator()
+        widget = self._create_table_widget(table, f"{line}.0")
+        if self.text.compare(f"{line}.0 lineend", "==", "end-1c"):
+            self.text.insert("end-1c", "\n")  # Platz zum Weiterschreiben unter der Tabelle
+        self.text.mark_set("insert", f"{line + 1}.0")
+        self.active_table = widget
+        self.text.edit_modified(True)
+        return widget
 
     # ------------------------------------------------------- Inhalt
     def clear(self) -> None:
+        for widget in self.tables.values():
+            widget.destroy()
+        self.tables.clear()
+        self.active_table = None
         self.text.delete("1.0", "end")
         self.text.edit_reset()
         self.typing_format = CharFormat()
@@ -450,7 +548,7 @@ class DocumentEditor(ctk.CTkFrame):
     def replace_range(self, start: str, end: str, new_text: str) -> None:
         """Ersetzt Text und übernimmt Zeichen-/Absatzformat vom Anfang des Bereichs."""
         tags = tuple(t for t in self.text.tag_names(start)
-                     if t.startswith((RUN_PREFIX, ALIGN_PREFIX, STYLE_PREFIX)))
+                     if t.startswith((RUN_PREFIX, *PARA_PREFIXES)))
         start = self.text.index(start)
         self.text.delete(start, end)
         if new_text:
@@ -466,6 +564,11 @@ class DocumentEditor(ctk.CTkFrame):
         paragraphs = list(getattr(document, "paragraphs", []) or [])
         for p_index, para in enumerate(paragraphs):
             line_start = self.text.index("end-1c")
+            if getattr(para, "table", None) is not None:
+                self._create_table_widget(para.table, "end-1c")
+                if p_index < len(paragraphs) - 1:
+                    self.text.tk.call(self._orig_cmd, "insert", "end-1c", "\n")
+                continue
             for run in getattr(para, "runs", []) or []:
                 fmt = CharFormat(
                     bold=bool(getattr(run, "bold", False)),
@@ -492,18 +595,25 @@ class DocumentEditor(ctk.CTkFrame):
             self.text.tag_add(ALIGN_PREFIX + alignment, f"{line}.0", f"{line}.0 lineend +1c")
             if style in theme.PARAGRAPH_STYLES:
                 self.text.tag_add(STYLE_PREFIX + style, f"{line}.0", f"{line}.0 lineend +1c")
+            if style in theme.LIST_STYLES:
+                level = max(0, min(theme.MAX_LIST_LEVEL, int(getattr(para, "list_level", 0) or 0)))
+                self._set_level(int(line), level)
         self.text.edit_reset()
         self.text.edit_modified(False)
         self.text.mark_set("insert", "1.0")
         self._on_cursor_moved()
 
-    def to_document(self, document_cls, paragraph_cls, run_cls):
+    def to_document(self, document_cls, paragraph_cls, run_cls, table_cls=None, cell_cls=None):
         """Erzeugt ein Document aus dem Widget-Inhalt (Klassen werden übergeben,
         damit die UI nicht zur Ladezeit vom Core abhängt)."""
         paragraphs = []
         last_line = int(self.text.index("end-1c").split(".")[0])
         for line in range(1, last_line + 1):
             start, end = f"{line}.0", f"{line}.0 lineend"
+            table_widget = self.table_on_line(line)
+            if table_widget is not None and table_cls is not None:
+                paragraphs.append(paragraph_cls(table=table_widget.to_table(table_cls, cell_cls)))
+                continue
             runs = []
             for s, e, fmt in self._segments(start, end):
                 text = self.text.get(s, e)
@@ -517,7 +627,7 @@ class DocumentEditor(ctk.CTkFrame):
             extra = {}
             if style in STYLE_TO_LIST_TYPE:
                 # Listen stehen im Core-Modell als list_type, nicht als Formatvorlage
-                extra = {"list_type": STYLE_TO_LIST_TYPE[style], "list_level": 0}
+                extra = {"list_type": STYLE_TO_LIST_TYPE[style], "list_level": self.list_level(line)}
                 style = "Normal"
             paragraphs.append(paragraph_cls(
                 runs=[run_cls(text=t, bold=f.bold, italic=f.italic, underline=f.underline,
@@ -528,6 +638,25 @@ class DocumentEditor(ctk.CTkFrame):
                 **extra,
             ))
         return document_cls(paragraphs=paragraphs)
+
+
+def _number_label(n: int, level: int) -> str:
+    """1. / a. / i. je nach Listenebene (wie core.document_model)."""
+    if level == 1:
+        letters = ""
+        while n > 0:
+            n, rest = divmod(n - 1, 26)
+            letters = chr(ord("a") + rest) + letters
+        return f"{letters}."
+    if level == 2:
+        out = ""
+        for value, symbol in ((1000, "m"), (900, "cm"), (500, "d"), (400, "cd"), (100, "c"), (90, "xc"),
+                              (50, "l"), (40, "xl"), (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i")):
+            while n >= value:
+                out += symbol
+                n -= value
+        return f"{out}."
+    return f"{n}."
 
 
 def _same_format(a: CharFormat, b: CharFormat) -> bool:
