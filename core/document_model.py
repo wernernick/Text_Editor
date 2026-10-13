@@ -95,8 +95,19 @@ class Image:
             raise ValueError(f"Unbekanntes Bildformat: {self.filename}") from exc
         return info.px_width * 72.0 / (info.horz_dpi or 72), info.px_height * 72.0 / (info.vert_dpi or 72)
 
+    @property
+    def is_supported(self) -> bool:
+        """False bei Formaten, die nicht gespeichert/angezeigt werden können (z.B. EMF, WMF, SVG aus Word)."""
+        try:
+            self.native_size_pt()
+        except ValueError:
+            return False
+        return True
+
     def display_size_pt(self) -> tuple[float, float]:
         """Größe, in der das Bild angezeigt und gespeichert wird."""
+        if self.width_pt and self.height_pt:  # bekannt (z.B. aus .docx), Format muss nicht lesbar sein
+            return self.width_pt, self.height_pt
         native_w, native_h = self.native_size_pt()
         width = self.width_pt or native_w
         if self.height_pt:

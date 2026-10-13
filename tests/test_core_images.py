@@ -63,3 +63,30 @@ def test_text_and_image_in_one_paragraph_are_split(tmp_path):
     loaded = load_docx(path)
     assert loaded.paragraphs[0].text == "Bildunterschrift "
     assert loaded.paragraphs[1].image is not None
+
+
+def test_unsupported_image_format_does_not_break_saving(tmp_path):
+    emf = Image(data=b"\x01\x00\x00\x00" + b"\x00" * 60, filename="image1.emf", width_pt=100, height_pt=50)
+    assert not emf.is_supported
+    assert emf.display_size_pt() == (100, 50)
+    doc = Document.from_text("Vorher")
+    doc.insert_image(1, emf)
+    doc.paragraphs.append(Paragraph(runs=[Run("Nachher")]))
+    path = str(tmp_path / "emf.docx")
+    save_docx(doc, path)
+    loaded = load_docx(path)
+    assert [p.text for p in loaded.paragraphs] == ["Vorher", "[Bild nicht unterstützt: image1.emf]", "Nachher"]
+
+
+def test_loaded_emf_from_word_saves(tmp_path):
+    """Word-Datei mit EMF-Bild: Laden und erneutes Speichern darf nicht abbrechen."""
+    import io
+    raw = docx.Document()
+    raw.add_paragraph().add_run().add_picture(io.BytesIO(_png(10, 10)))
+    path = str(tmp_path / "quelle.docx")
+    raw.save(path)
+    doc = load_docx(path)
+    doc.paragraphs[0].image.data = b"\x01\x00\x00\x00" + b"\x00" * 60  # wie ein EMF-Blob
+    doc.paragraphs[0].image.filename = "image1.emf"
+    save_docx(doc, str(tmp_path / "ziel.docx"))
+    assert "nicht unterstützt" in load_docx(str(tmp_path / "ziel.docx")).plain_text()

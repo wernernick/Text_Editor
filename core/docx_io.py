@@ -226,10 +226,20 @@ def _write_table(target, table: Table) -> None:
         tr_pr.append(OxmlElement("w:tblHeader"))
 
 
+def unsupported_image_text(image: Image) -> str:
+    """Platzhaltertext für Bilder, die python-docx nicht schreiben kann (EMF, WMF, SVG ...)."""
+    return f"[Bild nicht unterstützt: {image.filename}]"
+
+
 def _write_image(target, para: Paragraph) -> None:
-    width, height = para.image.display_size_pt()
     out = target.add_paragraph()
     out.alignment = _ALIGN_TO_DOCX.get(para.alignment, WD_ALIGN_PARAGRAPH.LEFT)
+    if not para.image.is_supported:
+        # python-docx kann nur PNG, JPEG, GIF, BMP und TIFF einbetten; statt abzubrechen
+        # bleibt eine sichtbare Markierung, der Rest des Dokuments wird gespeichert.
+        out.add_run(unsupported_image_text(para.image)).italic = True
+        return
+    width, height = para.image.display_size_pt()
     out.add_run().add_picture(io.BytesIO(para.image.data), width=Pt(width), height=Pt(height))
 
 
