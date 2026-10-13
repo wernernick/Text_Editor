@@ -147,6 +147,9 @@ class Ribbon(ctk.CTkFrame):
             btn = _button(r, label, lambda k=key: a["align"](k), 70)
             btn.pack(side="left", padx=2)
             self.align_buttons[key] = btn
+        r = g.row()
+        _button(r, theme.BULLET_CHAR + " Aufzählung", a["list_bullet"], 110).pack(side="left", padx=2)
+        _button(r, "1. Nummerierung", a["list_number"], 120).pack(side="left", padx=2)
         self._separator(page)
 
         g = self._group(page, "Formatvorlagen")
@@ -164,6 +167,13 @@ class Ribbon(ctk.CTkFrame):
         for style in ("Heading 1", "Heading 2"):
             _button(r, theme.STYLE_LABELS[style].replace("Überschrift", "Ü"),
                     lambda s=style: a["style"](s), 78).pack(side="left", padx=2)
+
+        self._separator(page)
+        g = self._group(page, "Bearbeiten")
+        r = g.row()
+        _button(r, "⌕ Suchen", a["find"], 96).pack(side="left", padx=2)
+        r = g.row()
+        _button(r, "⇄ Ersetzen", a["replace"], 96).pack(side="left", padx=2)
 
     # ---------------------------------------------------------- Einfügen
     def _build_insert(self, page) -> None:

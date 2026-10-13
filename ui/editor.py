@@ -19,6 +19,8 @@ RUN_PREFIX = "run|"
 ALIGN_PREFIX = "align|"
 STYLE_PREFIX = "style|"
 ALIGNMENTS = ("left", "center", "right", "justify")
+LIST_TYPE_TO_STYLE = {"bullet": "List Bullet", "number": "List Number"}
+STYLE_TO_LIST_TYPE = {v: k for k, v in LIST_TYPE_TO_STYLE.items()}
 
 
 @dataclass(frozen=True)
@@ -82,7 +84,10 @@ class DocumentEditor(ctk.CTkFrame):
             button_hover_color=theme.ACCENT,
         )
         self.scrollbar.grid(row=0, column=3, sticky="ns")
-        self.text.configure(yscrollcommand=self.scrollbar.set)
+        self.text.configure(yscrollcommand=self._on_yscroll)
+        self._markers: list[tk.Label] = []
+        self._marker_job = None
+        self.text.bind("<Configure>", lambda _e: self.schedule_markers(), add="+")
 
         for align in ALIGNMENTS:
             self.text.tag_configure(ALIGN_PREFIX + align, justify="left" if align == "justify" else align)
@@ -121,6 +126,10 @@ class DocumentEditor(ctk.CTkFrame):
             if spec is None:
                 self.text.tag_configure(tag)
                 continue
+            if spec == "list":
+                indent = round(theme.LIST_INDENT * self.zoom / 100)
+                self.text.tag_configure(tag, lmargin1=indent, lmargin2=indent)
+                continue
             size, bold, color = spec
             self.text.tag_configure(
                 tag, foreground=color, spacing1=10, spacing3=8,
@@ -131,6 +140,7 @@ class DocumentEditor(ctk.CTkFrame):
 
     def set_zoom(self, zoom: int) -> None:
         self.zoom = zoom
+        self.schedule_markers()
         for tag in self._known_run_tags:
             self.text.tag_configure(tag, font=self._font_for(CharFormat.from_tag(tag)))
         self._configure_style_tags()
@@ -163,7 +173,60 @@ class DocumentEditor(ctk.CTkFrame):
         return tk_.call((self._orig_cmd,) + tuple(args))
 
     # ---------------------------------------------------------- Events
+    # ------------------------------------------------- Listen-Markierungen
+    def _on_yscroll(self, first, last) -> None:
+        self.scrollbar.set(first, last)
+        self.schedule_markers()
+
+    def schedule_markers(self) -> None:
+        if self._marker_job is None:
+            self._marker_job = self.text.after_idle(self._refresh_markers)
+
+    def list_markers(self) -> list[tuple[int, str]]:
+        """(Zeile, Markierung) für alle Listenabsätze; Nummern zählen fortlaufend."""
+        result = []
+        number = 0
+        last_line = int(self.text.index("end-1c").split(".")[0])
+        for line in range(1, last_line + 1):
+            style = self.paragraph_value(STYLE_PREFIX, f"{line}.0", "Normal")
+            if style == "List Number":
+                number += 1
+                result.append((line, f"{number}."))
+            else:
+                number = 0
+                if style == "List Bullet":
+                    result.append((line, theme.BULLET_CHAR))
+        return result
+
+    def _refresh_markers(self) -> None:
+        self._marker_job = None
+        markers = []
+        for line, label in self.list_markers():
+            info = self.text.dlineinfo(f"{line}.0")
+            if info:
+                markers.append((info, label))
+        while len(self._markers) < len(markers):
+            self._markers.append(tk.Label(
+                self.text, bg=theme.BG_PAGE, fg=theme.ACCENT, borderwidth=0, padx=0, pady=0))
+        size = max(6, round(theme.DEFAULT_DOC_SIZE * self.zoom / 100))
+        pad_x, pad_y = int(self.text.cget("padx")), int(self.text.cget("pady"))
+        for widget, (info, label) in zip(self._markers, markers):
+            x, y, _w, height, _base = info
+            widget.configure(text=label, font=(theme.DEFAULT_DOC_FONT, size, "bold"))
+            # place() rechnet ab dem inneren Rand (padx/pady) des Text-Widgets
+            widget.place(x=x - round(theme.LIST_INDENT * self.zoom / 100) - pad_x,
+                         y=y - pad_y, height=height)
+        for widget in self._markers[len(markers):]:
+            widget.place_forget()
+
+    def toggle_list(self, style: str) -> None:
+        """Wie Word: Liste ein-/ausschalten für die markierten Absätze."""
+        lines = list(self._selected_lines())
+        all_set = all(self.paragraph_value(STYLE_PREFIX, f"{n}.0", "Normal") == style for n in lines)
+        self.set_style("Normal" if all_set else style)
+
     def _on_modified(self, _event=None) -> None:
+        self.schedule_markers()
         if self.text.edit_modified():
             if self.on_change:
                 self.on_change()
@@ -181,6 +244,14 @@ class DocumentEditor(ctk.CTkFrame):
         """Wie in Word: nach einer Überschrift beginnt der neue Absatz als "Normal"."""
         line = int(self.text.index("insert").split(".")[0])
         prev_style = self.paragraph_value(STYLE_PREFIX, f"{line - 1}.0", "Normal")
+        if line > 1 and prev_style in theme.LIST_STYLES:
+            if not self.text.get(f"{line - 1}.0", f"{line}.0 lineend").strip("\n"):
+                # Enter in leerem Listenpunkt beendet die Liste
+                self.text.delete(f"{line - 1}.0 lineend")
+                self.text.mark_set("insert", f"{line - 1}.0")
+                self.set_style("Normal")
+            self.schedule_markers()
+            return
         if line > 1 and prev_style != "Normal" and not self.text.get(f"{line}.0", f"{line}.0 lineend"):
             start, end = f"{line}.0", f"{line}.0 lineend +1c"
             for tag in self.text.tag_names(start):
@@ -304,6 +375,16 @@ class DocumentEditor(ctk.CTkFrame):
         self.text.edit_reset()
         self.typing_format = CharFormat()
 
+    def replace_range(self, start: str, end: str, new_text: str) -> None:
+        """Ersetzt Text und übernimmt Zeichen-/Absatzformat vom Anfang des Bereichs."""
+        tags = tuple(t for t in self.text.tag_names(start)
+                     if t.startswith((RUN_PREFIX, ALIGN_PREFIX, STYLE_PREFIX)))
+        start = self.text.index(start)
+        self.text.delete(start, end)
+        if new_text:
+            self.text.tk.call(self._orig_cmd, "insert", start, new_text, tags)
+        self.text.edit_modified(True)
+
     def insert_plain(self, text: str) -> None:
         self.text.insert("insert", text)
 
@@ -333,6 +414,9 @@ class DocumentEditor(ctk.CTkFrame):
             if alignment not in ALIGNMENTS:
                 alignment = "left"
             style = getattr(para, "style", "Normal") or "Normal"
+            list_type = getattr(para, "list_type", None)
+            if list_type in LIST_TYPE_TO_STYLE:
+                style = LIST_TYPE_TO_STYLE[list_type]
             self.text.tag_add(ALIGN_PREFIX + alignment, f"{line}.0", f"{line}.0 lineend +1c")
             if style in theme.PARAGRAPH_STYLES:
                 self.text.tag_add(STYLE_PREFIX + style, f"{line}.0", f"{line}.0 lineend +1c")
@@ -357,12 +441,19 @@ class DocumentEditor(ctk.CTkFrame):
                     runs[-1] = (runs[-1][0] + text, fmt)
                 else:
                     runs.append((text, fmt))
+            style = self.paragraph_value(STYLE_PREFIX, start, "Normal")
+            extra = {}
+            if style in STYLE_TO_LIST_TYPE:
+                # Listen stehen im Core-Modell als list_type, nicht als Formatvorlage
+                extra = {"list_type": STYLE_TO_LIST_TYPE[style], "list_level": 0}
+                style = "Normal"
             paragraphs.append(paragraph_cls(
                 runs=[run_cls(text=t, bold=f.bold, italic=f.italic, underline=f.underline,
                               font_family=f.font_family, font_size=f.font_size, color=f.color)
                       for t, f in runs],
                 alignment=self.paragraph_value(ALIGN_PREFIX, start, "left"),
-                style=self.paragraph_value(STYLE_PREFIX, start, "Normal"),
+                style=style,
+                **extra,
             ))
         return document_cls(paragraphs=paragraphs)
 

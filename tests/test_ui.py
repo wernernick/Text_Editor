@@ -115,6 +115,65 @@ class EditorConversionTest(unittest.TestCase):
         doc = self.app.build_document()
         self.assertEqual([p.style for p in doc.paragraphs], ["Heading 1", "Normal"])
 
+    def test_find_and_replace(self):
+        self.editor.load_document(Document(paragraphs=[
+            Paragraph([Run("Neon "), Run("neon", bold=True), Run(" NEON")])]))
+        self.app.show_find(replace=True)
+        bar = self.app.find_bar
+        bar.find_entry.insert(0, "neon")
+        bar.refresh()
+        self.assertEqual(len(bar.matches), 3)
+        bar.case_var.set(True)
+        bar.refresh()
+        self.assertEqual(len(bar.matches), 1)
+        bar.case_var.set(False)
+        bar.replace_entry.insert(0, "Cyber")
+        self.assertEqual(bar.replace_all(), 3)
+        doc = self.app.build_document()
+        self.assertEqual(doc.plain_text(), "Cyber Cyber Cyber")
+        # Formatierung des ersetzten Wortes bleibt erhalten
+        self.assertEqual([(r.text, r.bold) for r in doc.paragraphs[0].runs],
+                         [("Cyber ", False), ("Cyber", True), (" Cyber", False)])
+        bar.close()
+        self.assertEqual(self.editor.text.tag_ranges("find|hit"), ())
+
+    def test_lists(self):
+        self.editor.load_document(Document.from_text("a\nb\nc\nd"))
+        self.editor.text.tag_add("sel", "1.0", "2.1")
+        self.app._toggle_list("List Number")
+        self.editor.text.tag_remove("sel", "1.0", "end")
+        self.editor.text.mark_set("insert", "4.0")
+        self.app._toggle_list("List Bullet")
+        self.assertEqual(self.editor.list_markers(), [(1, "1."), (2, "2."), (4, "◆")])
+        doc = self.app.build_document()
+        self.assertEqual([p.list_type for p in doc.paragraphs], ["number", "number", None, "bullet"])
+        self.assertEqual([p.style for p in doc.paragraphs], ["Normal"] * 4)
+        # nochmal umschalten -> Liste aus
+        self.app._toggle_list("List Bullet")
+        self.assertIsNone(self.app.build_document().paragraphs[3].list_type)
+        # Enter in Listenpunkt setzt die Liste fort, Enter auf leerem Punkt beendet sie
+        self.editor.text.mark_set("insert", "2.end")
+        self.editor.text.insert("insert", "\n")
+        self.editor._after_return()
+        self.assertEqual(self.editor.list_markers()[-1], (3, "3."))
+        self.editor.text.insert("insert", "\n")
+        self.editor._after_return()
+        doc = self.app.build_document()
+        self.assertEqual(doc.plain_text(), "a\nb\n\nc\nd")
+        self.assertIsNone(doc.paragraphs[2].list_type)
+
+    def test_lists_docx_roundtrip(self):
+        self.editor.load_document(Document(paragraphs=[
+            Paragraph([Run("Punkt")], list_type="bullet"),
+            Paragraph([Run("Eins")], list_type="number")]))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "l.docx")
+            self.assertTrue(self.app._write(path))
+            self.assertTrue(self.app.load_path(path))
+        self.assertEqual([p.list_type for p in self.app.build_document().paragraphs],
+                         ["bullet", "number"])
+        self.assertEqual(self.editor.list_markers(), [(1, "◆"), (2, "1.")])
+
     def test_zoom(self):
         self.app._zoom_step(1)
         self.assertEqual(self.editor.zoom, 110)

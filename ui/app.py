@@ -10,6 +10,7 @@ import customtkinter as ctk
 
 from ui import theme
 from ui.editor import ALIGN_PREFIX, STYLE_PREFIX, DocumentEditor
+from ui.find_dialog import FindBar
 from ui.ribbon import Ribbon
 
 APP_NAME = "NEON//WRITE"
@@ -51,6 +52,8 @@ class TextEditorApp(ctk.CTk):
         self.status.pack(side="bottom", fill="x")
         self.editor = DocumentEditor(self, on_change=self._on_change, on_cursor=self._refresh_ui)
         self.editor.pack(side="top", fill="both", expand=True)
+        self.find_bar = FindBar(self, self.editor, on_status=self.status.set_state)
+        self.find_bar.on_close = self.find_bar.pack_forget
 
         self._bind_shortcuts()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -71,6 +74,9 @@ class TextEditorApp(ctk.CTk):
             "insert_line": lambda: self._insert("\n" + "─" * 40 + "\n"),
             "insert_text": self._insert,
             "zoom_step": self._zoom_step, "zoom_reset": lambda: self._set_zoom(100),
+            "list_bullet": lambda: self._toggle_list("List Bullet"),
+            "list_number": lambda: self._toggle_list("List Number"),
+            "find": lambda: self.show_find(False), "replace": lambda: self.show_find(True),
             "toggle_wrap": self._toggle_wrap, "toggle_status": self._toggle_status,
         }
 
@@ -81,6 +87,7 @@ class TextEditorApp(ctk.CTk):
             "u": lambda: self._toggle("underline"),
             "e": lambda: self._set_alignment("center"), "l": lambda: self._set_alignment("left"),
             "r": lambda: self._set_alignment("right"), "j": lambda: self._set_alignment("justify"),
+            "f": lambda: self.show_find(False), "h": lambda: self.show_find(True),
             "plus": lambda: self._zoom_step(1), "minus": lambda: self._zoom_step(-1),
         }
         for key, func in bindings.items():
@@ -88,9 +95,20 @@ class TextEditorApp(ctk.CTk):
             self.editor.text.bind(seq, lambda _e, f=func: (f(), "break")[1])
             self.bind(seq, lambda _e, f=func: f())
         self.editor.text.bind("<Control-Shift-S>", lambda _e: (self.save_document_as(), "break")[1])
+        self.editor.text.bind("<Control-Shift-L>", lambda _e: (self._toggle_list("List Bullet"), "break")[1])
         self.editor.text.bind("<Control-y>", lambda _e: (self._redo(), "break")[1])
         for i, style in enumerate(("Heading 1", "Heading 2", "Heading 3"), start=1):
             self.editor.text.bind(f"<Control-Alt-Key-{i}>", lambda _e, s=style: (self._set_style(s), "break")[1])
+
+    def show_find(self, replace: bool = False) -> None:
+        if not self.find_bar.winfo_ismapped():
+            self.find_bar.pack(side="top", fill="x", before=self.editor)
+        self.find_bar.open(replace)
+
+    def _toggle_list(self, style: str) -> None:
+        self.editor.toggle_list(style)
+        self._refresh_ui()
+        self.editor.text.focus_set()
 
     def _toggle(self, attr: str) -> None:
         self.editor.toggle(attr)
