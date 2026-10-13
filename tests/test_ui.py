@@ -18,10 +18,24 @@ except Exception:  # noqa: BLE001 - kein Display / kein tkinter
 from core.document_model import Document, Paragraph, Run
 
 
+def _create_app(attempts: int = 3):
+    """Tk-Fenster anlegen; auf Windows-CI schlägt Tk() gelegentlich beim Lesen von init.tcl fehl."""
+    import time
+    import tkinter
+
+    for attempt in range(attempts):
+        try:
+            return TextEditorApp()
+        except tkinter.TclError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(0.5)
+
+
 @unittest.skipUnless(HAS_DISPLAY, "kein Display für Tk verfügbar")
 class EditorConversionTest(unittest.TestCase):
     def setUp(self):
-        self.app = TextEditorApp()
+        self.app = _create_app()
         self.app.withdraw()
         self.editor = self.app.editor
 
