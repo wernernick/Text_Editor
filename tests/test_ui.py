@@ -203,6 +203,53 @@ class EditorConversionTest(unittest.TestCase):
         self.app._actions()["page_mode"]("Neon")
         self.assertEqual(self.editor.text.cget("bg"), "#0b1018")
 
+    def test_font_step_and_clear_format(self):
+        self.editor.load_document(Document(paragraphs=[
+            Paragraph([Run("ab", bold=True, font_size=11), Run("cd", font_size=20)], style="Heading 1")]))
+        self.editor.text.tag_add("sel", "1.0", "1.4")
+        self.app._font_step(1)
+        runs = self.app.build_document().paragraphs[0].runs
+        self.assertEqual([r.font_size for r in runs], [12, 24])
+        self.app._font_step(-1)
+        self.app._font_step(-1)
+        runs = self.app.build_document().paragraphs[0].runs
+        self.assertEqual([r.font_size for r in runs], [10, 18])
+        self.app._clear_format()
+        para = self.app.build_document().paragraphs[0]
+        self.assertEqual([(r.text, r.bold, r.font_size) for r in para.runs], [("abcd", False, 11)])
+        self.assertEqual(para.style, "Normal")
+
+    def test_change_case_keeps_formatting(self):
+        self.editor.load_document(Document(paragraphs=[
+            Paragraph([Run("hallo "), Run("neon", bold=True), Run("welt straße")])]))
+        self.editor.text.tag_add("sel", "1.0", "1.end")
+        self.app._change_case("title")
+        runs = self.app.build_document().paragraphs[0].runs
+        self.assertEqual([(r.text, r.bold) for r in runs],
+                         [("Hallo ", False), ("Neonwelt"[:4], True), ("welt Straße", False)])
+        self.app._change_case("upper")  # "ß" -> "SS" ändert die Länge
+        doc = self.app.build_document()
+        self.assertEqual(doc.plain_text(), "HALLO NEONWELT STRASSE")
+        self.assertTrue(doc.paragraphs[0].runs[1].bold)
+        self.app._change_case("cycle")  # GROSS -> Titel
+        self.assertEqual(self.app.build_document().plain_text(), "Hallo Neonwelt Strasse")
+
+    def test_context_menu_and_clipboard(self):
+        self.editor.load_document(Document.from_text("kopier mich"))
+        menu = self.app.build_context_menu()
+        self.assertEqual(menu.entrycget(0, "state"), "disabled")  # Ausschneiden ohne Auswahl
+        self.editor.text.tag_add("sel", "1.0", "1.6")
+        menu = self.app.build_context_menu()
+        self.assertEqual(menu.entrycget(0, "state"), "normal")
+        self.app._clipboard("<<Copy>>")
+        self.assertEqual(self.app.clipboard_get(), "kopier")
+        self.editor.text.tag_remove("sel", "1.0", "end")
+        self.editor.text.mark_set("insert", "1.end")
+        self.app._clipboard("<<Paste>>")
+        self.assertEqual(self.editor.get_plain_text(), "kopier michkopier")
+        self.app._undo()
+        self.assertEqual(self.editor.get_plain_text(), "kopier mich")
+
     def test_zoom(self):
         self.app._zoom_step(1)
         self.assertEqual(self.editor.zoom, 110)

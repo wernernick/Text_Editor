@@ -337,22 +337,81 @@ class DocumentEditor(ctk.CTkFrame):
 
     def apply_format(self, **changes) -> None:
         """Ändert Zeichenformat der Auswahl bzw. das Tippformat ohne Auswahl."""
+        self.transform_format(lambda fmt: replace(fmt, **changes))
+
+    def transform_format(self, func) -> None:
+        """Wendet func(CharFormat) -> CharFormat auf jeden Abschnitt der Auswahl an
+        (ohne Auswahl auf das Tippformat)."""
         if not self.has_selection():
-            self.typing_format = replace(self.typing_format, **changes)
+            self.typing_format = func(self.typing_format)
             self._notify_cursor()
             return
         start, end = self.text.index("sel.first"), self.text.index("sel.last")
         self.text.edit_separator()
-        segments = list(self._segments(start, end))
-        for s, e, fmt in segments:
+        for s, e, fmt in list(self._segments(start, end)):
             for tag in self.text.tag_names(s):
                 if tag.startswith(RUN_PREFIX):
                     self.text.tag_remove(tag, s, e)
-            new_tag = self._ensure_run_tag(replace(fmt, **changes))
-            self.text.tag_add(new_tag, s, e)
+            self.text.tag_add(self._ensure_run_tag(func(fmt)), s, e)
         self.text.edit_separator()
-        self.typing_format = replace(self.current_format(), **changes)
+        self.typing_format = func(self.format_at("sel.first"))
         self.text.edit_modified(True)
+
+    def step_font_size(self, direction: int) -> None:
+        """Wie Word (Strg+Shift+> / <): zur nächsten Größe der Standardliste springen."""
+        sizes = theme.FONT_SIZES
+
+        def step(fmt: CharFormat) -> CharFormat:
+            if direction > 0:
+                size = next((x for x in sizes if x > fmt.font_size), fmt.font_size + 10)
+            else:
+                size = next((x for x in reversed(sizes) if x < fmt.font_size), max(1, fmt.font_size - 1))
+            return replace(fmt, font_size=min(400, size))
+
+        self.transform_format(step)
+
+    def clear_format(self) -> None:
+        """Zeichenformat und Formatvorlage der Auswahl auf Standard zurücksetzen."""
+        self.transform_format(lambda _fmt: CharFormat())
+        if self.has_selection():
+            lines = list(self._selected_lines())
+            if any(self.paragraph_value(STYLE_PREFIX, f"{n}.0", "Normal") not in theme.LIST_STYLES
+                   for n in lines):
+                self.set_style("Normal")
+
+    def change_case(self, mode: str) -> None:
+        """mode: "upper", "lower", "title" oder "cycle" (wie Umschalt+F3 in Word)."""
+        if not self.has_selection():
+            return
+        start, end = self.text.index("sel.first"), self.text.index("sel.last")
+        content = self.text.get(start, end)
+        if mode == "cycle":
+            if content == content.lower():
+                mode = "upper"
+            elif content == content.upper():
+                mode = "title"
+            else:
+                mode = "lower"
+        convert = {"upper": str.upper, "lower": str.lower, "title": str.title}[mode]
+        whole = convert(content)
+        self.text.edit_separator()
+        segments = list(self._segments(start, end))
+        offsets, pos = [], 0
+        for s_, e_, _fmt in segments:
+            length = len(self.text.get(s_, e_))
+            offsets.append((pos, pos + length))
+            pos += length
+        same_length = len(whole) == len(content)
+        for (s_, e_, _fmt), (a_, b_) in reversed(list(zip(segments, offsets))):
+            original = content[a_:b_]
+            # Gleiche Länge: Ergebnis der Gesamtumwandlung verteilen (Wortanfänge stimmen
+            # auch über Formatgrenzen); sonst (z.B. "ß" -> "SS") je Abschnitt umwandeln.
+            new = whole[a_:b_] if same_length else convert(original)
+            if new != original:
+                self.replace_range(s_, e_, new)
+        end = f"{start} +{len(whole)}c"
+        self.text.tag_add("sel", start, end)
+        self.text.edit_separator()
 
     def toggle(self, attr: str) -> None:
         current = getattr(self.current_format(), attr)
