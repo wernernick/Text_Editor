@@ -212,3 +212,35 @@ class EditorConversionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAS_DISPLAY, "kein Display für Tk verfügbar")
+class AutosaveWiringTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._old_home = os.environ.get("TEXT_EDITOR_HOME")
+        os.environ["TEXT_EDITOR_HOME"] = self._tmp.name
+        self.app = _create_app()
+        self.app.withdraw()
+
+    def tearDown(self):
+        self.app.dirty = False
+        self.app.destroy()
+        if self._old_home is None:
+            os.environ.pop("TEXT_EDITOR_HOME", None)
+        else:
+            os.environ["TEXT_EDITOR_HOME"] = self._old_home
+        self._tmp.cleanup()
+
+    def test_autosave_is_recoverable_and_removed_after_save(self):
+        from core import autosave
+        self.app.editor.load_document(Document.from_text("Ungespeichert"))
+        self.app.dirty = True
+        self.app._autosave()
+        entries = autosave.list_recoverable()
+        self.assertEqual(len(entries), 1)
+        self.assertIsNone(entries[0].original_path)
+        self.assertEqual(autosave.recover(entries[0]).plain_text(), "Ungespeichert")
+
+        self.assertTrue(self.app._write(os.path.join(self._tmp.name, "doc.docx")))
+        self.assertEqual(autosave.list_recoverable(), [])

@@ -284,11 +284,10 @@ class TextEditorApp(ctk.CTk):
         if not self.dirty:
             return
         try:
-            from core.docx_io import save_docx
-            from core.file_manager import autosave_path
-            target = autosave_path(self.path)
+            from core.autosave import autosave
             document = self.build_document()
-            save_docx(document, str(target))
+            document.path = self.path
+            autosave(document)  # schreibt auch die Metadaten für die Wiederherstellung
         except Exception:  # noqa: BLE001 - Autosave darf die Arbeit nie unterbrechen
             self.status.set_state("AUTOSAVE FEHLGESCHLAGEN", ok=False)
             return
@@ -323,6 +322,8 @@ class TextEditorApp(ctk.CTk):
             messagebox.showerror(APP_NAME, f"Datei konnte nicht gespeichert werden:\n{exc}", parent=self)
             self.status.set_state("FEHLER BEIM SPEICHERN", ok=False)
             return False
+        self._drop_autosave(self.path)
+        self._drop_autosave(path)
         self.path = path
         self.dirty = False
         self._update_title()
@@ -330,8 +331,17 @@ class TextEditorApp(ctk.CTk):
         self._remember(path)
         return True
 
+    def _drop_autosave(self, path: str | None) -> None:
+        """Sicherung entfernen, sobald der Stand gespeichert oder bewusst verworfen wurde."""
+        try:
+            from core.autosave import discard
+            discard(path)
+        except Exception:  # noqa: BLE001
+            pass
+
     def on_close(self) -> None:
         if self._confirm_discard():
+            self._drop_autosave(self.path)
             self.destroy()
 
     def destroy(self) -> None:
