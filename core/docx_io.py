@@ -11,12 +11,13 @@ from docx.oxml.ns import qn
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.table import CT_Tbl
 from docx.oxml.text.paragraph import CT_P
-from docx.shared import Pt, RGBColor
+from docx.enum.section import WD_ORIENT
+from docx.shared import Mm, Pt, RGBColor
 from docx.table import Table as DocxTable
 from docx.text.paragraph import Paragraph as DocxParagraph
 
 from core.document_model import (
-    LIST_TYPES, MAX_LIST_LEVEL, Document, Image, Paragraph, Run, Table, TableCell,
+    LIST_TYPES, MAX_LIST_LEVEL, Document, Image, PageSetup, Paragraph, Run, Table, TableCell,
 )
 
 EMU_PER_PT = 12700
@@ -179,7 +180,31 @@ def load_docx(path: str) -> Document:
         paragraphs.extend(Paragraph(image=img, alignment=model_para.alignment) for img in images)
     if not paragraphs:
         paragraphs.append(Paragraph(runs=[]))
-    return Document(paragraphs=paragraphs, path=os.path.abspath(path))
+    return Document(paragraphs=paragraphs, path=os.path.abspath(path), page=_read_page(source))
+
+
+def _read_page(source) -> PageSetup:
+    page = PageSetup()
+    if not source.sections:
+        return page
+    section = source.sections[0]
+    for attr, value in (("width_mm", section.page_width), ("height_mm", section.page_height),
+                        ("margin_top_mm", section.top_margin), ("margin_bottom_mm", section.bottom_margin),
+                        ("margin_left_mm", section.left_margin), ("margin_right_mm", section.right_margin)):
+        if value is not None:
+            setattr(page, attr, round(value.mm, 1))
+    return page
+
+
+def _write_page(target, page: PageSetup) -> None:
+    for section in target.sections:
+        section.orientation = WD_ORIENT.LANDSCAPE if page.orientation == "landscape" else WD_ORIENT.PORTRAIT
+        section.page_width = Mm(page.width_mm)
+        section.page_height = Mm(page.height_mm)
+        section.top_margin = Mm(page.margin_top_mm)
+        section.bottom_margin = Mm(page.margin_bottom_mm)
+        section.left_margin = Mm(page.margin_left_mm)
+        section.right_margin = Mm(page.margin_right_mm)
 
 
 def _write_paragraph(out, para: Paragraph, target) -> None:
@@ -226,16 +251,27 @@ def _write_table(target, table: Table) -> None:
         tr_pr.append(OxmlElement("w:tblHeader"))
 
 
+def unsupported_image_text(image: Image) -> str:
+    """Platzhaltertext für Bilder, die python-docx nicht schreiben kann (EMF, WMF, SVG ...)."""
+    return f"[Bild nicht unterstützt: {image.filename}]"
+
+
 def _write_image(target, para: Paragraph) -> None:
-    width, height = para.image.display_size_pt()
     out = target.add_paragraph()
     out.alignment = _ALIGN_TO_DOCX.get(para.alignment, WD_ALIGN_PARAGRAPH.LEFT)
+    if not para.image.is_supported:
+        # python-docx kann nur PNG, JPEG, GIF, BMP und TIFF einbetten; statt abzubrechen
+        # bleibt eine sichtbare Markierung, der Rest des Dokuments wird gespeichert.
+        out.add_run(unsupported_image_text(para.image)).italic = True
+        return
+    width, height = para.image.display_size_pt()
     out.add_run().add_picture(io.BytesIO(para.image.data), width=Pt(width), height=Pt(height))
 
 
 def save_docx(doc: Document, path: str) -> None:
     """Speichert das Dokumentmodell als .docx-Datei."""
     target = docx.Document()
+    _write_page(target, doc.page)
     for para in doc.paragraphs:
         if para.table is not None:
             _write_table(target, para.table)

@@ -95,8 +95,19 @@ class Image:
             raise ValueError(f"Unbekanntes Bildformat: {self.filename}") from exc
         return info.px_width * 72.0 / (info.horz_dpi or 72), info.px_height * 72.0 / (info.vert_dpi or 72)
 
+    @property
+    def is_supported(self) -> bool:
+        """False bei Formaten, die nicht gespeichert/angezeigt werden können (z.B. EMF, WMF, SVG aus Word)."""
+        try:
+            self.native_size_pt()
+        except ValueError:
+            return False
+        return True
+
     def display_size_pt(self) -> tuple[float, float]:
         """Größe, in der das Bild angezeigt und gespeichert wird."""
+        if self.width_pt and self.height_pt:  # bekannt (z.B. aus .docx), Format muss nicht lesbar sein
+            return self.width_pt, self.height_pt
         native_w, native_h = self.native_size_pt()
         width = self.width_pt or native_w
         if self.height_pt:
@@ -175,12 +186,72 @@ class Table:
                 del row[index]
 
 
+PAPER_SIZES_MM = {"A4": (210.0, 297.0), "A5": (148.0, 210.0), "A3": (297.0, 420.0),
+                  "Letter": (215.9, 279.4), "Legal": (215.9, 355.6)}
+
+
+@dataclass
+class PageSetup:
+    """Seiteneinrichtung wie in Word (Layout > Seitenränder/Ausrichtung/Format). Maße in Millimetern."""
+
+    width_mm: float = 210.0  # A4 hoch
+    height_mm: float = 297.0
+    margin_top_mm: float = 25.0  # Word "Normal": 2,5 cm oben/unten/links/rechts
+    margin_bottom_mm: float = 25.0
+    margin_left_mm: float = 25.0
+    margin_right_mm: float = 25.0
+
+    MARGIN_PRESETS = {  # wie Words Auswahl unter "Seitenränder"
+        "Normal": (25.0, 25.0, 25.0, 25.0),
+        "Schmal": (12.7, 12.7, 12.7, 12.7),
+        "Mittel": (25.4, 25.4, 19.1, 19.1),
+        "Breit": (25.4, 25.4, 50.8, 50.8),
+    }
+
+    @property
+    def orientation(self) -> str:
+        return "landscape" if self.width_mm > self.height_mm else "portrait"
+
+    def set_orientation(self, orientation: str) -> None:
+        if orientation not in ("portrait", "landscape"):
+            raise ValueError(f"Unbekannte Ausrichtung: {orientation}")
+        if orientation != self.orientation:
+            self.width_mm, self.height_mm = self.height_mm, self.width_mm
+
+    def set_paper(self, name: str) -> None:
+        """Papierformat setzen (A4, A5, A3, Letter, Legal); die Ausrichtung bleibt erhalten."""
+        orientation = self.orientation
+        self.width_mm, self.height_mm = PAPER_SIZES_MM[name]
+        self.set_orientation(orientation)
+
+    @property
+    def paper_name(self) -> str | None:
+        size = tuple(sorted((round(self.width_mm, 1), round(self.height_mm, 1))))
+        for name, dims in PAPER_SIZES_MM.items():
+            if tuple(sorted(dims)) == size:
+                return name
+        return None
+
+    def apply_margin_preset(self, name: str) -> None:
+        self.margin_top_mm, self.margin_bottom_mm, self.margin_left_mm, self.margin_right_mm = \
+            self.MARGIN_PRESETS[name]
+
+    @property
+    def text_width_mm(self) -> float:
+        return self.width_mm - self.margin_left_mm - self.margin_right_mm
+
+    @property
+    def text_height_mm(self) -> float:
+        return self.height_mm - self.margin_top_mm - self.margin_bottom_mm
+
+
 @dataclass
 class Document:
     """Ein komplettes Dokument."""
 
     paragraphs: list[Paragraph] = field(default_factory=list)
     path: Optional[str] = None
+    page: PageSetup = field(default_factory=PageSetup)
 
     @classmethod
     def new(cls) -> "Document":
